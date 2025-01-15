@@ -1,5 +1,5 @@
 BINARY_NAME=main
-MAIN_PATH=./cmd/main.go
+MAIN_PATH=./main.go
 
 build:
 	golangci-lint run
@@ -7,6 +7,8 @@ build:
 
 run:
 	golangci-lint run
-	go build -o ${BINARY_NAME} ${MAIN_PATH}
-	./${BINARY_NAME}
-	rm ${BINARY_NAME}
+	go run main.go .
+
+run-f:
+	golangci-lint run
+	go run main.go . -f
