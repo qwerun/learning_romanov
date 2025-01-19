@@ -23,7 +23,6 @@ func main() {
 }
 
 func dirTree(out io.Writer, path string, printFiles bool) error {
-
 	s, err := getDirs(path)
 	if err != nil {
 		return err
@@ -41,16 +40,44 @@ func dirTree(out io.Writer, path string, printFiles bool) error {
 			}
 
 			for _, valDir := range v {
-				er := worker(val, valDir)
+				er := worker(val, valDir, printFiles)
 				if er != nil {
 					return er
 				}
-
 			}
+		}
+	}
+	return nil
+}
 
-			//if err = worker(&fileNames, printFiles); err != nil {
-			//	return err
-			//}
+func worker(val, valDir string, printFiles bool) error { // [project static zline zzfile.txt]
+	resVal := fmt.Sprintf("%v/%v", val, valDir)
+
+	res, err := getDirs(resVal) // добавить доп. параметр, который будет является bool
+	// и в зависимости от признака printFiles будет пропускать файлы если -f
+	if err != nil {
+		return err
+	}
+	fmt.Println(resVal)
+	for _, v := range res {
+
+		if printFiles {
+			info, err := os.Stat(v)
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				er := worker(resVal, v, printFiles)
+				if er != nil {
+					return er
+				}
+			}
+			return err
+		}
+
+		er := worker(resVal, v, printFiles)
+		if er != nil {
+			return er
 		}
 	}
 
@@ -58,9 +85,7 @@ func dirTree(out io.Writer, path string, printFiles bool) error {
 }
 
 func getDirs(path string) ([]string, error) {
-
 	info, err := os.Stat(path)
-
 	if err != nil || !info.IsDir() {
 
 		return nil, nil
@@ -78,16 +103,4 @@ func getDirs(path string) ([]string, error) {
 	}
 	slices.Sort(s)
 	return s, nil
-}
-
-func worker(val, valDir string) error {
-	resVal := fmt.Sprintf("%v/%v", val, valDir)
-	fmt.Println(resVal)
-
-	_, err := getDirs(resVal) // добавить доп. параметр, который будет является bool
-	// и в зависимости от признака printFiles будет пропускать файлы если -f
-	if err != nil {
-		return err
-	}
-	return nil
 }
