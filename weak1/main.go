@@ -53,32 +53,29 @@ func dirTree(out io.Writer, path string, printFiles bool) error {
 func worker(val, valDir string, printFiles bool) error { // [project static zline zzfile.txt]
 	resVal := fmt.Sprintf("%v/%v", val, valDir)
 
-	res, err := getDirs(resVal) // добавить доп. параметр, который будет является bool
-	// и в зависимости от признака printFiles будет пропускать файлы если -f
+	res, err := getDirs(resVal)
 	if err != nil {
 		return err
 	}
-	fmt.Println(resVal)
-	for _, v := range res {
 
-		if printFiles {
-			info, err := os.Stat(v)
-			if err != nil {
-				return err
-			}
-			if info.IsDir() {
-				er := worker(resVal, v, printFiles)
-				if er != nil {
-					return er
-				}
-			}
+	if !printFiles { //printFiles or !printFiles
+		info, err := os.Stat(resVal)
+		if err != nil {
 			return err
 		}
+		if !info.IsDir() {
+			return err
+		}
+	}
+	fmt.Println(resVal)
+
+	for _, v := range res {
 
 		er := worker(resVal, v, printFiles)
 		if er != nil {
 			return er
 		}
+
 	}
 
 	return nil
