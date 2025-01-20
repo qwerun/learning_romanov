@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"slices"
+	"strings"
 )
 
 func main() {
@@ -15,7 +16,6 @@ func main() {
 	}
 	path := os.Args[1]
 	printFiles := len(os.Args) == 3 && os.Args[2] == "-f"
-
 	err := dirTree(out, path, printFiles)
 	if err != nil {
 		panic(err.Error())
@@ -38,9 +38,8 @@ func dirTree(out io.Writer, path string, printFiles bool) error {
 			if err != nil {
 				log.Fatal(err)
 			}
-
 			for _, valDir := range v {
-				er := worker(val, valDir, printFiles)
+				er := worker(out, val, valDir, printFiles)
 				if er != nil {
 					return er
 				}
@@ -50,7 +49,7 @@ func dirTree(out io.Writer, path string, printFiles bool) error {
 	return nil
 }
 
-func worker(val, valDir string, printFiles bool) error { // [project static zline zzfile.txt]
+func worker(out io.Writer, val, valDir string, printFiles bool) error { // [project static zline zzfile.txt]
 	resVal := fmt.Sprintf("%v/%v", val, valDir)
 
 	res, err := getDirs(resVal)
@@ -67,33 +66,32 @@ func worker(val, valDir string, printFiles bool) error { // [project static zlin
 			return err
 		}
 	}
-	fmt.Println(resVal)
 
+	aboba := len(strings.Split(resVal, "/")) - 1
+	_, err = fmt.Fprintf(out, "%v───%s\n", aboba, resVal)
+	if err != nil {
+		return err
+	}
 	for _, v := range res {
 
-		er := worker(resVal, v, printFiles)
+		er := worker(out, resVal, v, printFiles)
 		if er != nil {
 			return er
 		}
-
 	}
-
 	return nil
 }
 
 func getDirs(path string) ([]string, error) {
 	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
-
 		return nil, nil
 	}
-
 	d, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer d.Close()
-
 	s, err := d.Readdirnames(-1)
 	if err != nil {
 		return nil, err
