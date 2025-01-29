@@ -7,9 +7,11 @@ import (
 
 func ExecutePipeline(jobs ...job) {
 	wg := &sync.WaitGroup{}
-	in, out := make(chan interface{}), make(chan interface{})
+	in := make(chan interface{})
+
 	for _, v := range jobs {
 
+		out := make(chan interface{})
 		wg.Add(1)
 		go func(in, out chan interface{}, job job) {
 			defer wg.Done()
@@ -28,38 +30,41 @@ func SingleHash(in chan interface{}, out chan interface{}) {
 	//crc32(data)+"~"+crc32(md5(data))
 	wg := &sync.WaitGroup{}
 	mu := &sync.Mutex{}
-	var md, crc, crcWithMd5 string
+	for val := range in {
+		v := fmt.Sprint(val)
+		wg.Add(1)
+		go func(v string) {
+			defer wg.Done()
+			md5Ch, crc32Ch := make(chan string), make(chan string)
 
-	v := fmt.Sprint(<-in)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		md = DataSignerMd5(v)
-	}()
+			go func() {
+				md5Ch <- DataSignerMd5(v)
+				close(md5Ch)
+			}()
 
-	wg.Add(1)
+			go func() {
+				mu.Lock()
+				crc32Ch <- DataSignerCrc32(v)
+				mu.Unlock()
+				close(crc32Ch)
+			}()
 
-	mu.Lock()
-	go func() {
-		defer wg.Done()
-		crc = DataSignerCrc32(v)
-		mu.Unlock()
-	}()
-	wg.Add(1)
-	mu.Lock()
-	go func() {
-		defer wg.Done()
-		crcWithMd5 = DataSignerCrc32(md)
-		mu.Unlock()
-	}()
+			md5Hash := <-md5Ch
+			mu.Lock()
+			crcWithMd5 := DataSignerCrc32(md5Hash)
+			mu.Unlock()
+			out <- fmt.Sprintf("%s~%s", <-crc32Ch, crcWithMd5)
+
+		}(v)
+	}
+
 	wg.Wait()
 
-	out <- fmt.Sprintf("%s~%s", crc, crcWithMd5)
-	close(out)
 }
 
 func MultiHash(in chan interface{}, out chan interface{}) {
 	// crc32(th+data)
+
 }
 
 func CombineResults(in chan interface{}, out chan interface{}) {
