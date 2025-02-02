@@ -92,23 +92,30 @@ func main() {
 	for n, val := range res {
 
 		for key := range val {
-			for i := 0; i < th; i++ {
-				wg.Add(1)
-				go func(v string, num int, wg *sync.WaitGroup) {
-					defer wg.Done()
-					gg := fmt.Sprintf("%v%v", num, v)
-					hashRes := DataSignerCrc32(gg)
 
-					res[n][key][i] = hashRes
+			//fmt.Println(val)
+			wg.Add(1)
+			go func(key string, n int, wg *sync.WaitGroup) {
+				defer wg.Done()
+				wgInner := &sync.WaitGroup{}
+				for i := 0; i < th; i++ {
+					wgInner.Add(1)
+					go func(v string, num int, keyMap int, wg *sync.WaitGroup) {
+						defer wgInner.Done()
+						gg := fmt.Sprintf("%v%v", num, v)
+						hashRes := DataSignerCrc32(gg)
+						res[keyMap][key][i] = hashRes
+					}(key, i, n, wgInner)
+				}
+				wgInner.Wait()
+				// out <- map[int]map[string][]string{n: val}
+				fmt.Println(map[int]map[string][]string{n: val})
+			}(key, n, wg)
 
-				}(key, i, wg)
-
-			}
 		}
 
 	}
 
 	wg.Wait()
-	fmt.Println(res)
 
 }
