@@ -55,25 +55,35 @@ import (
 //}
 
 func main() {
-	in := map[int]string{
-		0: "4108050209~502633748",
-		1: "2212294583~709660146",
+	in := make(chan interface{})
+
+	go func(in chan interface{}) {
+		defer close(in)
+		aboba := map[int]string{
+			0: "4108050209~502633748",
+			1: "2212294583~709660146",
+		}
+		in <- aboba
+	}(in)
+
+	input := make(map[int]string)
+	for data := range in {
+		if receivedMap, ok := data.(map[int]string); ok {
+			for key, value := range receivedMap {
+				input[key] = value
+			}
+		}
 	}
-	//in := make(chan int)
-	//go func(in chan int) {
-	//	defer close(in)
-	//	aboba := map[int]string{
-	//		0: "4108050209~502633748",
-	//		1: "2212294583~709660146",
-	//	}
-	//	for y := range aboba {
-	//		in <- y
-	//	}
-	//}(in)
+	//fmt.Println(input)
+	//input := map[int]string{
+	//	0: "4108050209~502633748",
+	//	1: "2212294583~709660146",
+	//}
+
 	th := 6
 	res := make(map[int]map[string][]string)
 
-	for key, inVal := range in {
+	for key, inVal := range input {
 		res[key] = make(map[string][]string)
 		res[key][inVal] = make([]string, th)
 	}

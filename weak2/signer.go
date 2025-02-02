@@ -31,9 +31,7 @@ func SingleHash(in chan interface{}, out chan interface{}) {
 	mu := &sync.Mutex{}
 	counter := -1
 	for val := range in {
-		mu.Lock()
 		counter++
-		mu.Unlock()
 		v := fmt.Sprint(val)
 		wg.Add(1)
 		go func(v string, num int) {
@@ -65,7 +63,44 @@ func SingleHash(in chan interface{}, out chan interface{}) {
 
 func MultiHash(in chan interface{}, out chan interface{}) {
 	// crc32(th+data)
+	input := make(map[int]string)
+	for data := range in {
+		if receivedMap, ok := data.(map[int]string); ok {
+			for key, value := range receivedMap {
+				input[key] = value
+			}
+		}
+	}
 
+	th := 6
+	res := make(map[int]map[string][]string)
+
+	for key, inVal := range input {
+		res[key] = make(map[string][]string)
+		res[key][inVal] = make([]string, th)
+	}
+
+	wg := &sync.WaitGroup{}
+	for n, val := range res {
+
+		for key := range val {
+			for i := 0; i < th; i++ {
+				wg.Add(1)
+				go func(v string, num int, wg *sync.WaitGroup) {
+					defer wg.Done()
+					gg := fmt.Sprintf("%v%v", num, v)
+					hashRes := DataSignerCrc32(gg)
+
+					res[n][key][i] = hashRes
+
+				}(key, i, wg)
+
+			}
+		}
+
+	}
+
+	wg.Wait()
 	close(out)
 }
 
