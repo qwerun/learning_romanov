@@ -16,7 +16,6 @@ func ExecutePipeline(jobs ...job) {
 		go func(in, out chan interface{}, job job) {
 			defer wg.Done()
 			job(in, out)
-			close(out)
 
 		}(in, out, v)
 
@@ -30,41 +29,44 @@ func SingleHash(in chan interface{}, out chan interface{}) {
 	//crc32(data)+"~"+crc32(md5(data))
 	wg := &sync.WaitGroup{}
 	mu := &sync.Mutex{}
+	counter := -1
 	for val := range in {
+		mu.Lock()
+		counter++
+		mu.Unlock()
 		v := fmt.Sprint(val)
 		wg.Add(1)
-		go func(v string) {
+		go func(v string, num int) {
 			defer wg.Done()
+
 			md5Ch, crc32Ch := make(chan string), make(chan string)
 
 			go func() {
+				mu.Lock()
 				md5Ch <- DataSignerMd5(v)
+				mu.Unlock()
 				close(md5Ch)
 			}()
 
 			go func() {
-				mu.Lock()
 				crc32Ch <- DataSignerCrc32(v)
-				mu.Unlock()
 				close(crc32Ch)
 			}()
 
 			md5Hash := <-md5Ch
-			mu.Lock()
 			crcWithMd5 := DataSignerCrc32(md5Hash)
-			mu.Unlock()
-			out <- fmt.Sprintf("%s~%s", <-crc32Ch, crcWithMd5)
-
-		}(v)
+			res := map[int]string{num: fmt.Sprintf("%s~%s", <-crc32Ch, crcWithMd5)}
+			out <- res
+		}(v, counter)
 	}
-
 	wg.Wait()
-
+	close(out)
 }
 
 func MultiHash(in chan interface{}, out chan interface{}) {
 	// crc32(th+data)
 
+	close(out)
 }
 
 func CombineResults(in chan interface{}, out chan interface{}) {
