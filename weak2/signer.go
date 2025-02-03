@@ -16,6 +16,7 @@ func ExecutePipeline(jobs ...job) {
 		go func(in, out chan interface{}, job job) {
 			defer wg.Done()
 			job(in, out)
+			close(out)
 		}(in, out, v)
 		in = out
 	}
@@ -50,7 +51,7 @@ func SingleHash(in chan interface{}, out chan interface{}) {
 		}(v, counter)
 	}
 	wg.Wait()
-	close(out)
+
 }
 
 func MultiHash(in chan interface{}, out chan interface{}) {
@@ -87,7 +88,6 @@ func MultiHash(in chan interface{}, out chan interface{}) {
 		}(n, wg)
 	}
 	wg.Wait()
-	close(out)
 }
 
 func CombineResults(in chan interface{}, out chan interface{}) {

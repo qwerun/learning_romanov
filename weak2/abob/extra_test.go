@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	main2 "weak2"
 )
 
 /*
@@ -21,19 +22,19 @@ import (
 func TestByIlia(t *testing.T) {
 
 	var recieved uint32
-	freeFlowJobs := []job{
-		job(func(in, out chan interface{}) {
+	freeFlowJobs := []main2.job{
+		main2.job(func(in, out chan interface{}) {
 			out <- uint32(1)
 			out <- uint32(3)
 			out <- uint32(4)
 		}),
-		job(func(in, out chan interface{}) {
+		main2.job(func(in, out chan interface{}) {
 			for val := range in {
 				out <- val.(uint32) * 3
 				time.Sleep(time.Millisecond * 100)
 			}
 		}),
-		job(func(in, out chan interface{}) {
+		main2.job(func(in, out chan interface{}) {
 			for val := range in {
 				fmt.Println("collected", val)
 				atomic.AddUint32(&recieved, val.(uint32))
@@ -43,7 +44,7 @@ func TestByIlia(t *testing.T) {
 
 	start := time.Now()
 
-	ExecutePipeline(freeFlowJobs...)
+	main2.ExecutePipeline(freeFlowJobs...)
 
 	end := time.Since(start)
 
