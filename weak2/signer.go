@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -22,7 +23,6 @@ func ExecutePipeline(jobs ...job) {
 }
 
 func SingleHash(in chan interface{}, out chan interface{}) {
-	//crc32(data)+"~"+crc32(md5(data))
 	wg := &sync.WaitGroup{}
 	mu := &sync.Mutex{}
 	counter := -1
@@ -54,7 +54,6 @@ func SingleHash(in chan interface{}, out chan interface{}) {
 }
 
 func MultiHash(in chan interface{}, out chan interface{}) {
-	// crc32(th+data)
 	input := make(map[int]string)
 	for data := range in {
 		if receivedMap, ok := data.(map[int]string); ok {
@@ -92,7 +91,35 @@ func MultiHash(in chan interface{}, out chan interface{}) {
 }
 
 func CombineResults(in chan interface{}, out chan interface{}) {
-
+	res := make(map[int][]string)
+	counter := 0
+	for val := range in {
+		m, ok := val.(map[int][]string)
+		if !ok {
+			continue
+		}
+		for k, v := range m {
+			res[k] = v
+		}
+		counter++
+	}
+	th := 6
+	cnt := 0
+	var builder strings.Builder
+	builder.Grow(counter * (th + 1))
+	for i := 0; i < counter; i++ {
+		for _, v := range res[i] {
+			builder.WriteString(v)
+			cnt++
+			if cnt%th == 0 {
+				if i+1 != counter {
+					builder.WriteString("-")
+				}
+			}
+		}
+	}
+	result := builder.String()
+	out <- result
 }
 
 //func workerPool() {
