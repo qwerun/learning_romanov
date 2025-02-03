@@ -10,17 +10,13 @@ func ExecutePipeline(jobs ...job) {
 	in := make(chan interface{})
 
 	for _, v := range jobs {
-
 		out := make(chan interface{})
 		wg.Add(1)
 		go func(in, out chan interface{}, job job) {
 			defer wg.Done()
 			job(in, out)
-
 		}(in, out, v)
-
 		in = out
-
 	}
 	wg.Wait()
 }
@@ -36,21 +32,17 @@ func SingleHash(in chan interface{}, out chan interface{}) {
 		wg.Add(1)
 		go func(v string, num int) {
 			defer wg.Done()
-
 			md5Ch, crc32Ch := make(chan string), make(chan string)
-
 			go func() {
 				mu.Lock()
 				md5Ch <- DataSignerMd5(v)
 				mu.Unlock()
 				close(md5Ch)
 			}()
-
 			go func() {
 				crc32Ch <- DataSignerCrc32(v)
 				close(crc32Ch)
 			}()
-
 			md5Hash := <-md5Ch
 			crcWithMd5 := DataSignerCrc32(md5Hash)
 			res := map[int]string{num: fmt.Sprintf("%s~%s", <-crc32Ch, crcWithMd5)}
@@ -71,37 +63,30 @@ func MultiHash(in chan interface{}, out chan interface{}) {
 			}
 		}
 	}
-
 	th := 6
-	res := make(map[int]map[string][]string)
-
-	for key, inVal := range input {
-		res[key] = make(map[string][]string)
-		res[key][inVal] = make([]string, th)
+	myRes := make(map[int][]string)
+	for key, _ := range input {
+		myRes[key] = make([]string, th)
 	}
-
 	wg := &sync.WaitGroup{}
-	for n, val := range res {
-		for key := range val {
-			wg.Add(1)
-			go func(key string, n int, wg *sync.WaitGroup) {
-				defer wg.Done()
-				wgInner := &sync.WaitGroup{}
-				for i := 0; i < th; i++ {
-					wgInner.Add(1)
-					go func(v string, num int, keyMap int, wg *sync.WaitGroup) {
-						defer wgInner.Done()
-						gg := fmt.Sprintf("%v%v", num, v)
-						hashRes := DataSignerCrc32(gg)
-						res[keyMap][key][i] = hashRes
-					}(key, i, n, wgInner)
-				}
-				wgInner.Wait()
-				out <- map[int]map[string][]string{n: val}
-			}(key, n, wg)
-		}
+	for n, _ := range myRes {
+		wg.Add(1)
+		go func(n int, wg *sync.WaitGroup) {
+			defer wg.Done()
+			wgInner := &sync.WaitGroup{}
+			for i := 0; i < th; i++ {
+				wgInner.Add(1)
+				go func(n int, prefix int, wgInner *sync.WaitGroup) {
+					defer wgInner.Done()
+					gg := fmt.Sprintf("%v%v", prefix, input[n])
+					hashRes := DataSignerCrc32(gg)
+					myRes[n][prefix] = hashRes
+				}(n, i, wgInner)
+			}
+			wgInner.Wait()
+			out <- map[int][]string{n: myRes[n]}
+		}(n, wg)
 	}
-
 	wg.Wait()
 	close(out)
 }

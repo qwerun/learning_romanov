@@ -5,7 +5,38 @@ import (
 	"sync"
 )
 
+//
 //func main() {
+//	in := make(chan interface{})
+//
+//	go func(in chan interface{}) {
+//		defer close(in)
+//		aboba := map[int]map[string][]string{
+//			0: {"2212294583~709660146": {"2956866606", "803518384", "1425683795", "3407918797", "2730963093", "1025356555"}},
+//		}
+//		in <- aboba
+//		aboba = map[int]map[string][]string{
+//			1: {"2212294583~709660146": {"495804419", "2186797981", "4182335870", "1720967904", "259286200", "2427381542"}},
+//		}
+//		in <- aboba
+//	}(in)
+//	th := 6
+//
+//	data := make(map[int]map[string][]string)
+//
+//	for key, inVal := range in {
+//		data[key] = make(map[string][]string)
+//		data[key][inVal] = make([]string, th)
+//	}
+//
+//	for val := range in {
+//
+//		fmt.Println(val)
+//	}
+//}
+
+//func main() {
+// //func SingleHash
 //	//in := []int{0, 1}
 //	in := make(chan int)
 //	go func(in chan int) {
@@ -55,6 +86,7 @@ import (
 //}
 
 func main() {
+	// func MultiHash
 	in := make(chan interface{})
 
 	go func(in chan interface{}) {
@@ -81,41 +113,32 @@ func main() {
 	//}
 
 	th := 6
-	res := make(map[int]map[string][]string)
+	myRes := make(map[int][]string)
 
-	for key, inVal := range input {
-		res[key] = make(map[string][]string)
-		res[key][inVal] = make([]string, th)
+	for key, _ := range input {
+		myRes[key] = make([]string, th)
 	}
 
 	wg := &sync.WaitGroup{}
-	for n, val := range res {
-
-		for key := range val {
-
-			//fmt.Println(val)
-			wg.Add(1)
-			go func(key string, n int, wg *sync.WaitGroup) {
-				defer wg.Done()
-				wgInner := &sync.WaitGroup{}
-				for i := 0; i < th; i++ {
-					wgInner.Add(1)
-					go func(v string, num int, keyMap int, wg *sync.WaitGroup) {
-						defer wgInner.Done()
-						gg := fmt.Sprintf("%v%v", num, v)
-						hashRes := DataSignerCrc32(gg)
-						res[keyMap][key][i] = hashRes
-					}(key, i, n, wgInner)
-				}
-				wgInner.Wait()
-				// out <- map[int]map[string][]string{n: val}
-				fmt.Println(map[int]map[string][]string{n: val})
-			}(key, n, wg)
-
-		}
-
+	for n, _ := range myRes {
+		wg.Add(1)
+		go func(n int, wg *sync.WaitGroup) {
+			defer wg.Done()
+			wgInner := &sync.WaitGroup{}
+			for i := 0; i < th; i++ {
+				wgInner.Add(1)
+				go func(n int, prefix int, wgInner *sync.WaitGroup) {
+					defer wgInner.Done()
+					gg := fmt.Sprintf("%v%v", prefix, input[n])
+					hashRes := DataSignerCrc32(gg)
+					myRes[n][prefix] = hashRes
+				}(n, i, wgInner)
+			}
+			wgInner.Wait()
+			//out <- map[int][]string{n: myRes[n]}
+			fmt.Println(map[int][]string{n: myRes[n]})
+		}(n, wg)
 	}
-
 	wg.Wait()
 
 }
