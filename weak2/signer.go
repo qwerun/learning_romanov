@@ -9,7 +9,6 @@ import (
 func ExecutePipeline(jobs ...job) {
 	wg := &sync.WaitGroup{}
 	in := make(chan interface{})
-
 	for _, v := range jobs {
 		out := make(chan interface{})
 		wg.Add(1)
@@ -22,7 +21,6 @@ func ExecutePipeline(jobs ...job) {
 	}
 	wg.Wait()
 }
-
 func SingleHash(in chan interface{}, out chan interface{}) {
 	wg := &sync.WaitGroup{}
 	mu := &sync.Mutex{}
@@ -51,9 +49,7 @@ func SingleHash(in chan interface{}, out chan interface{}) {
 		}(v, counter)
 	}
 	wg.Wait()
-
 }
-
 func MultiHash(in chan interface{}, out chan interface{}) {
 	input := make(map[int]string)
 	for data := range in {
@@ -65,11 +61,11 @@ func MultiHash(in chan interface{}, out chan interface{}) {
 	}
 	th := 6
 	myRes := make(map[int][]string)
-	for key, _ := range input {
+	for key := range input {
 		myRes[key] = make([]string, th)
 	}
 	wg := &sync.WaitGroup{}
-	for n, _ := range myRes {
+	for n := range myRes {
 		wg.Add(1)
 		go func(n int, wg *sync.WaitGroup) {
 			defer wg.Done()
@@ -89,7 +85,6 @@ func MultiHash(in chan interface{}, out chan interface{}) {
 	}
 	wg.Wait()
 }
-
 func CombineResults(in chan interface{}, out chan interface{}) {
 	res := make(map[int][]string)
 	counter := 0
@@ -121,59 +116,3 @@ func CombineResults(in chan interface{}, out chan interface{}) {
 	result := builder.String()
 	out <- result
 }
-
-//func workerPool() {
-//	ctx, cancel := context.WithCancel(context.Background())
-//	defer cancel()
-//
-//	wg := &sync.WaitGroup{}
-//	numbersToProcess, processdNumbers := make(chan int, 5), make(chan int, 5)
-//
-//	for i := 0; i <= runtime.NumCPU(); i++ {
-//		wg.Add(1)
-//		go func() {
-//			defer wg.Done()
-//			worker(ctx, numbersToProcess, processdNumbers)
-//		}()
-//	}
-//
-//	go func() {
-//		for i := 0; i < 1000; i++ {
-//			if i == 500 {
-//				cancel()
-//			}
-//			numbersToProcess <- i
-//
-//		}
-//		close(numbersToProcess)
-//	}()
-//
-//	go func() {
-//		wg.Wait()
-//		close(processdNumbers)
-//	}()
-//
-//	var counter int
-//	for resVal := range processdNumbers {
-//		counter++
-//		fmt.Println(resVal)
-//	}
-//
-//	fmt.Println(counter)
-//
-//}
-//
-//func worker(ctx context.Context, toProcess <-chan int, processed chan<- int) {
-//	for {
-//		select {
-//		case <-ctx.Done():
-//			return
-//		case value, ok := <-toProcess:
-//			if !ok {
-//				return
-//			}
-//			time.Sleep(time.Millisecond * 5)
-//			processed <- value * value
-//		}
-//	}
-//}
