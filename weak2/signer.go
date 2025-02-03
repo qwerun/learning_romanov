@@ -108,7 +108,7 @@ func CombineResults(in chan interface{}, out chan interface{}) {
 			cnt++
 			if cnt%th == 0 {
 				if i+1 != counter {
-					builder.WriteString("-")
+					builder.WriteString("_")
 				}
 			}
 		}
