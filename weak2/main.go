@@ -1,57 +1,57 @@
 package main
 
-//
-//
-//import (
-//	"fmt"
-//	"strings"
-//	"time"
-//)
-//
-//func main() {
-//	in := make(chan interface{})
-//
-//	go func(in chan interface{}) {
-//		//map[0:[2956866606 803518384 1425683795 3407918797 2730963093 1025356555]]
-//		//map[1:[495804419 2186797981 4182335870 1720967904 259286200 2427381542]]
-//		defer close(in)
-//		in <- map[int][]string{0: {"2956866606", "803518384", "1425683795", "3407918797", "2730963093", "1025356555"}}
-//		time.Sleep(time.Second)
-//		in <- map[int][]string{1: {"495804419", "2186797981", "4182335870", "1720967904", "259286200", "2427381542"}}
-//
-//	}(in)
-//
-//	res := make(map[int][]string)
-//	counter := 0
-//	for val := range in {
-//		m, ok := val.(map[int][]string)
-//		if !ok {
-//			continue
-//		}
-//		for k, v := range m {
-//			res[k] = v
-//		}
-//		counter++
-//	}
-//	th := 6
-//	cnt := 0
-//	var builder strings.Builder
-//	builder.Grow(counter * (th + 1))
-//	for i := 0; i < counter; i++ {
-//		for _, v := range res[i] {
-//			builder.WriteString(v)
-//			cnt++
-//			if cnt%th == 0 {
-//				if i+1 != counter {
-//					builder.WriteString("-")
-//				}
-//			}
-//		}
-//	}
-//	result := builder.String()
-//	//out <- result
-//	fmt.Println(result)
-//}
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+func main() {
+	in := make(chan interface{})
+
+	go func(in chan interface{}) {
+		//map[0:[2956866606 803518384 1425683795 3407918797 2730963093 1025356555]]
+		//map[1:[495804419 2186797981 4182335870 1720967904 259286200 2427381542]]
+		defer close(in)
+		in <- map[int][]string{0: {"495804419", "803518384", "1425683795", "3407918797", "2730963093", "1025356555"}}
+		time.Sleep(time.Second)
+		in <- map[int][]string{1: {"2956866606", "2186797981", "4182335870", "1720967904", "259286200", "2427381542"}}
+
+	}(in)
+
+	res := make(map[int][]string)
+	counter := 0
+	for val := range in {
+		m, ok := val.(map[int][]string)
+		if !ok {
+			continue
+		}
+		for k, v := range m {
+			res[k] = v
+		}
+		counter++
+	}
+	th := 6
+	cnt := 0
+	var builder strings.Builder
+	builder.Grow(counter * (th + 1))
+	for i := 0; i < counter; i++ {
+		for _, v := range res[i] {
+			fmt.Println(v)
+			builder.WriteString(v)
+			cnt++
+			if cnt%th == 0 {
+				if i+1 != counter {
+					builder.WriteString("_")
+				}
+			}
+		}
+	}
+	//result := builder.String()
+	//out <- result
+	//fmt.Println(result)
+}
+
 //
 ////func main() {
 //// //func SingleHash
