@@ -1,13 +1,23 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"regexp"
-	"strings"
 )
+
+type User struct {
+	Browsers []string `json:"browsers"`
+	Company  string   `json:"company"`
+	Country  string   `json:"country"`
+	Email    string   `json:"email"`
+	Job      string   `json:"job"`
+	Name     string   `json:"name"`
+	Phone    string   `json:"phone"`
+}
 
 func FastSearch(out io.Writer) {
 
@@ -17,34 +27,52 @@ func FastSearch(out io.Writer) {
 	}
 	defer file.Close()
 
-	fileContents, err := io.ReadAll(file)
-	if err != nil {
-		panic(err)
-	}
-
 	r := regexp.MustCompile("@")
-	seenBrowsers := []string{}
+
 	uniqueBrowsers := 0
 	foundUsers := ""
-
-	lines := strings.Split(string(fileContents), "\n")
-
 	users := make([]map[string]interface{}, 0)
-	for _, line := range lines {
+	var usersT []User
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
 		user := make(map[string]interface{})
+
 		// fmt.Printf("%v %v\n", err, line)
-		err := json.Unmarshal([]byte(line), &user)
+		err := json.Unmarshal(scanner.Bytes(), &user)
 		if err != nil {
 			panic(err)
 		}
 		users = append(users, user)
+
+		var userT User
+		err = json.Unmarshal(scanner.Bytes(), &userT)
+		if err != nil {
+			panic(err)
+		}
+		usersT = append(usersT, userT)
 	}
 
-	for i, user := range users {
+	fmt.Printf("%v", usersT)
 
+	seenBrowsers := make([]string, 0, len(users))
+
+	if err := scanner.Err(); err != nil {
+		panic(err)
+	}
+
+	andr, err := regexp.Compile("Android")
+	if err != nil {
+		panic(err)
+	}
+	mse, err := regexp.Compile("MSIE")
+	if err != nil {
+		panic(err)
+	}
+	for i, user := range users {
 		isAndroid := false
 		isMSIE := false
-
 		browsers, ok := user["browsers"].([]interface{})
 		if !ok {
 			// log.Println("cant cast browsers")
@@ -57,7 +85,8 @@ func FastSearch(out io.Writer) {
 				// log.Println("cant cast browser to string")
 				continue
 			}
-			if ok, err := regexp.MatchString("Android", browser); ok && err == nil {
+
+			if andr.MatchString(browser) {
 				isAndroid = true
 				notSeenBefore := true
 				for _, item := range seenBrowsers {
@@ -71,15 +100,8 @@ func FastSearch(out io.Writer) {
 					uniqueBrowsers++
 				}
 			}
-		}
 
-		for _, browserRaw := range browsers {
-			browser, ok := browserRaw.(string)
-			if !ok {
-				// log.Println("cant cast browser to string")
-				continue
-			}
-			if ok, err := regexp.MatchString("MSIE", browser); ok && err == nil {
+			if mse.MatchString(browser) {
 				isMSIE = true
 				notSeenBefore := true
 				for _, item := range seenBrowsers {
