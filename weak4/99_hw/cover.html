@@ -1,0 +1,730 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>99hw: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">99hw/client.go (100.0%)</option>
+				
+				<option value="file1">99hw/main.go (71.8%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package main
+
+import (
+        "encoding/json"
+        "errors"
+        "fmt"
+        "io/ioutil"
+        "net"
+        "net/http"
+        "net/url"
+        "strconv"
+        "time"
+)
+
+var (
+        errTest = errors.New("testing")
+        client  = &amp;http.Client{Timeout: time.Second}
+)
+
+type User struct {
+        Id     int
+        Name   string
+        Age    int
+        About  string
+        Gender string
+}
+
+type SearchResponse struct {
+        Users    []User
+        NextPage bool
+}
+
+type SearchErrorResponse struct {
+        Error string
+}
+
+const (
+        OrderByAsc  = -1
+        OrderByAsIs = 0
+        OrderByDesc = 1
+
+        ErrorBadOrderField = `OrderField invalid`
+)
+
+type SearchRequest struct {
+        Limit      int
+        Offset     int    // Можно учесть после сортировки
+        Query      string // подстрока в 1 из полей
+        OrderField string
+        OrderBy    int
+}
+
+type SearchClient struct {
+        // токен, по которому происходит авторизация на внешней системе, уходит туда через хедер
+        AccessToken string
+        // урл внешней системы, куда идти
+        URL string
+}
+
+// FindUsers отправляет запрос во внешнюю систему, которая непосредственно ищет пользоваталей
+func (srv *SearchClient) FindUsers(req SearchRequest) (*SearchResponse, error) <span class="cov8" title="1">{
+
+        searcherParams := url.Values{}
+
+        if req.Limit &lt; 0 </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("limit must be &gt; 0")
+        }</span>
+        <span class="cov8" title="1">if req.Limit &gt; 25 </span><span class="cov8" title="1">{
+                req.Limit = 25
+        }</span>
+        <span class="cov8" title="1">if req.Offset &lt; 0 </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("offset must be &gt; 0")
+        }</span>
+
+        //нужно для получения следующей записи, на основе которой мы скажем - можно показать переключатель следующей страницы или нет
+        <span class="cov8" title="1">req.Limit++
+
+        searcherParams.Add("limit", strconv.Itoa(req.Limit))
+        searcherParams.Add("offset", strconv.Itoa(req.Offset))
+        searcherParams.Add("query", req.Query)
+        searcherParams.Add("order_field", req.OrderField)
+        searcherParams.Add("order_by", strconv.Itoa(req.OrderBy))
+
+        searcherReq, err := http.NewRequest("GET", srv.URL+"?"+searcherParams.Encode(), nil)
+        searcherReq.Header.Add("AccessToken", srv.AccessToken)
+
+        resp, err := client.Do(searcherReq)
+        if err != nil </span><span class="cov8" title="1">{
+                if err, ok := err.(net.Error); ok &amp;&amp; err.Timeout() </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("timeout for %s", searcherParams.Encode())
+                }</span>
+                <span class="cov8" title="1">return nil, fmt.Errorf("unknown error %s", err)</span>
+        }
+        <span class="cov8" title="1">defer resp.Body.Close()
+        body, err := ioutil.ReadAll(resp.Body)
+
+        switch resp.StatusCode </span>{
+        case http.StatusUnauthorized:<span class="cov8" title="1">
+                return nil, fmt.Errorf("Bad AccessToken")</span>
+        case http.StatusInternalServerError:<span class="cov8" title="1">
+                return nil, fmt.Errorf("SearchServer fatal error")</span>
+        case http.StatusBadRequest:<span class="cov8" title="1">
+                errResp := SearchErrorResponse{}
+                err = json.Unmarshal(body, &amp;errResp)
+                if err != nil </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("cant unpack error json: %s", err)
+                }</span>
+                <span class="cov8" title="1">if errResp.Error == "ErrorBadOrderField" </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("OrderFeld %s invalid", req.OrderField)
+                }</span>
+                <span class="cov8" title="1">return nil, fmt.Errorf("unknown bad request error: %s", errResp.Error)</span>
+        }
+
+        <span class="cov8" title="1">data := []User{}
+        err = json.Unmarshal(body, &amp;data)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("cant unpack result json: %s", err)
+        }</span>
+
+        <span class="cov8" title="1">result := SearchResponse{}
+        if len(data) == req.Limit </span><span class="cov8" title="1">{
+                result.NextPage = true
+                result.Users = data[0 : len(data)-1]
+        }</span> else<span class="cov8" title="1"> {
+                result.Users = data[0:len(data)]
+        }</span>
+
+        <span class="cov8" title="1">return &amp;result, err</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package main
+
+import (
+        "encoding/json"
+        "encoding/xml"
+        "net/http"
+        "os"
+        "sort"
+        "strconv"
+        "strings"
+        "time"
+)
+
+type Row struct {
+        ID         int    `xml:"id"`
+        Age        int    `xml:"age"`
+        FirstName  string `xml:"first_name"`
+        LastName   string `xml:"last_name"`
+        Gender     string `xml:"gender"`
+        About      string `xml:"about"`
+        Registered string `xml:"registered"`
+        Name       string `xml:"-"`
+}
+
+type Root struct {
+        XMLName xml.Name `xml:"root"`
+        Rows    []Row    `xml:"row"`
+}
+
+func main() {<span class="cov0" title="0">
+
+        //http.HandleFunc("/search", Search)
+        //if err := http.ListenAndServe(":3000", nil); err != nil {
+        //        log.Fatalf("Server failed: %v", err)
+        //}
+
+        //go func() {
+        //        http.HandleFunc("/search", Search)
+        //        if err := http.ListenAndServe(":3000", nil); err != nil {
+        //                log.Fatalf("Server failed: %v", err)
+        //        }
+        //}()
+
+        //time.Sleep(100 * time.Millisecond)
+
+        //sc := SearchClient{
+        //        AccessToken: "mycooltoken123",
+        //        URL:         "http://localhost:3000/search",
+        //}
+        //cases := []SearchRequest{
+        //        {
+        //                Limit:      10,
+        //                Offset:     0,
+        //                Query:      "Boy",
+        //                OrderField: "Name",
+        //                OrderBy:    OrderByAsIs,
+        //        },
+        //        {
+        //                Limit:      10,
+        //                Offset:     0,
+        //                Query:      "ga",
+        //                OrderField: "Name",
+        //                OrderBy:    OrderByDesc,
+        //        },
+        //}
+        //
+        //for i, cs := range cases {
+        //        r, err := sc.FindUsers(cs)
+        //        if err != nil {
+        //                log.Fatalf("FindUsers Error: %v, caseNum: %v", err, i)
+        //        }
+        //
+        //        fmt.Printf("main Result: %+v\n", r.Users)
+        //}
+        //
+        //select {}
+}</span>
+
+func SearchServerErrors(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        queryParams := r.URL.Query()
+        mockError := queryParams.Get("query")
+
+        switch mockError </span>{
+        case "timeout":<span class="cov8" title="1">
+                time.Sleep(2 * time.Second)</span>
+        case "500":<span class="cov8" title="1">
+                http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+                return</span>
+        case "invalid_json":<span class="cov8" title="1">
+                w.WriteHeader(http.StatusOK)
+                w.Write([]byte(`{"id": 123, "name": "test, 2}`))
+                return</span>
+        case "400_unknown":<span class="cov8" title="1">
+                w.Header().Set("Content-Type", "application/json")
+                w.WriteHeader(http.StatusBadRequest)
+                errResp := SearchErrorResponse{Error: ""}
+                json.NewEncoder(w).Encode(errResp)
+                return</span>
+        case "400_cant_unpack":<span class="cov8" title="1">
+                w.Header().Set("Content-Type", "application/json")
+                w.WriteHeader(http.StatusBadRequest)
+                return</span>
+        }
+
+        <span class="cov0" title="0">w.Header().Set("Content-Type", "application/json")
+        w.Write([]byte(`[]`))</span>
+}
+
+func SearchServer(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        token := r.Header.Get("AccessToken")
+        if token != "mycooltoken123" </span><span class="cov8" title="1">{
+                http.Error(w, "Bad token", http.StatusUnauthorized)
+        }</span>
+
+        <span class="cov8" title="1">queryParams := r.URL.Query()
+        maxIterations := 10000
+        orderField := queryParams.Get("order_field")
+        orderByStr := queryParams.Get("order_by")
+        query := queryParams.Get("query")
+        limitStr := queryParams.Get("limit")
+        offsetStr := queryParams.Get("offset")
+
+        limit, err := strconv.Atoi(limitStr)
+        if err != nil </span><span class="cov0" title="0">{
+                limit = 0
+        }</span>
+        <span class="cov8" title="1">offset, err := strconv.Atoi(offsetStr)
+        if err != nil </span><span class="cov0" title="0">{
+                offset = 0
+        }</span>
+        <span class="cov8" title="1">orderBy, err := strconv.Atoi(orderByStr)
+        if err != nil </span><span class="cov0" title="0">{
+                orderBy = OrderByAsIs
+        }</span>
+        <span class="cov8" title="1">dataName := "dataset.xml"
+
+        file, err := os.Open(dataName)
+
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, "Ошибка при открытии файла", http.StatusInternalServerError)
+                return
+        }</span>
+        <span class="cov8" title="1">defer file.Close()
+
+        var root Root
+        decoder := xml.NewDecoder(file)
+        if err := decoder.Decode(&amp;root); err != nil </span><span class="cov0" title="0">{
+                http.Error(w, "Ошибка при декодировании XML", http.StatusInternalServerError)
+                return
+        }</span>
+        <span class="cov8" title="1">var filteredRows []Row
+        cnt := 0
+
+        for i, row := range root.Rows </span><span class="cov8" title="1">{
+                if i &lt; offset </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+                <span class="cov8" title="1">if (limit == 0 &amp;&amp; cnt == maxIterations) || (limit &gt; 0 &amp;&amp; cnt == limit) </span><span class="cov8" title="1">{
+                        break</span>
+                }
+                <span class="cov8" title="1">root.Rows[i].Name = row.FirstName + row.LastName
+                if !(strings.Contains(strings.ToLower(root.Rows[i].Name), strings.ToLower(query)) ||
+                        strings.Contains(strings.ToLower(root.Rows[i].About), strings.ToLower(query))) </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+                <span class="cov8" title="1">filteredRows = append(filteredRows, root.Rows[i])
+                cnt++</span>
+        }
+
+        <span class="cov8" title="1">switch orderField </span>{
+        case "Id", "Age", "Name":<span class="cov8" title="1"></span>
+        default:<span class="cov8" title="1">
+                w.Header().Set("Content-Type", "application/json")
+                w.WriteHeader(http.StatusBadRequest)
+                errResp := SearchErrorResponse{Error: "ErrorBadOrderField"}
+                json.NewEncoder(w).Encode(errResp)
+                return</span>
+        }
+
+        <span class="cov8" title="1">if orderBy != OrderByAsIs </span><span class="cov8" title="1">{
+                sort.SliceStable(filteredRows, func(i, j int) bool </span><span class="cov0" title="0">{
+                        switch orderField </span>{
+                        case "Id":<span class="cov0" title="0">
+                                if orderBy == OrderByAsc </span><span class="cov0" title="0">{
+                                        return filteredRows[i].ID &lt; filteredRows[j].ID
+                                }</span> else<span class="cov0" title="0"> if orderBy == OrderByDesc </span><span class="cov0" title="0">{
+                                        return filteredRows[i].ID &gt; filteredRows[j].ID
+                                }</span>
+                        case "Age":<span class="cov0" title="0">
+                                if orderBy == OrderByAsc </span><span class="cov0" title="0">{
+                                        return filteredRows[i].Age &lt; filteredRows[j].Age
+                                }</span> else<span class="cov0" title="0"> if orderBy == OrderByDesc </span><span class="cov0" title="0">{
+                                        return filteredRows[i].Age &gt; filteredRows[j].Age
+                                }</span>
+                        case "Name":<span class="cov0" title="0">
+                                if orderBy == OrderByAsc </span><span class="cov0" title="0">{
+                                        return filteredRows[i].Name &lt; filteredRows[j].Name
+                                }</span> else<span class="cov0" title="0"> if orderBy == OrderByDesc </span><span class="cov0" title="0">{
+                                        return filteredRows[i].Name &gt; filteredRows[j].Name
+                                }</span>
+                        }
+                        <span class="cov0" title="0">return false</span>
+                })
+        }
+
+        <span class="cov8" title="1">w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(filteredRows)</span>
+}
+
+//func Search(w http.ResponseWriter, r *http.Request) {
+//        queryParams := r.URL.Query()
+//        maxIterations := 10000
+//        orderField := queryParams.Get("order_field")
+//        orderByStr := queryParams.Get("order_by")
+//        query := queryParams.Get("query")
+//        limitStr := queryParams.Get("limit")
+//        offsetStr := queryParams.Get("offset")
+//
+//        limit, err := strconv.Atoi(limitStr)
+//        if err != nil {
+//                limit = 0
+//        }
+//        offset, err := strconv.Atoi(offsetStr)
+//        if err != nil {
+//                offset = 0
+//        }
+//        orderBy, err := strconv.Atoi(orderByStr)
+//        if err != nil {
+//                orderBy = OrderByAsIs
+//        }
+//
+//        file, err := os.Open("dataset.xml")
+//        if err != nil {
+//                fmt.Println("Ошибка при открытии файла:", err)
+//                return
+//        }
+//
+//        defer func() {
+//                if err := file.Close(); err != nil {
+//                        fmt.Println("Ошибка при закрытии файла:", err)
+//                }
+//        }()
+//
+//        var root Root
+//        decoder := xml.NewDecoder(file)
+//        if err := decoder.Decode(&amp;root); err != nil {
+//                fmt.Println("Ошибка при декодировании XML:", err)
+//                return
+//        }
+//        var filteredRows []Row
+//        cnt := 0
+//
+//        for i, row := range root.Rows {
+//                if i &lt; offset {
+//                        continue
+//                }
+//                if (limit == 0 &amp;&amp; cnt == maxIterations) || (limit &gt; 0 &amp;&amp; cnt == limit) {
+//                        break
+//                }
+//                root.Rows[i].Name = row.FirstName + row.LastName
+//                if !(strings.Contains(strings.ToLower(root.Rows[i].Name), strings.ToLower(query)) ||
+//                        strings.Contains(strings.ToLower(root.Rows[i].About), strings.ToLower(query))) {
+//                        continue
+//                }
+//                filteredRows = append(filteredRows, root.Rows[i])
+//                cnt++
+//        }
+//
+//        switch orderField {
+//        case `Id`, `Age`, `Name`:
+//        default:
+//                fmt.Println(ErrorBadOrderField)
+//                return
+//        }
+//
+//        if orderBy != OrderByAsIs {
+//                sort.SliceStable(filteredRows, func(i, j int) bool {
+//                        switch orderField {
+//                        case "Id":
+//                                if orderBy == OrderByAsc {
+//                                        return filteredRows[i].ID &lt; filteredRows[j].ID
+//                                } else if orderBy == OrderByDesc {
+//                                        return filteredRows[i].ID &gt; filteredRows[j].ID
+//                                }
+//                        case "Age":
+//                                if orderBy == OrderByAsc {
+//                                        return filteredRows[i].Age &lt; filteredRows[j].Age
+//                                } else if orderBy == OrderByDesc {
+//                                        return filteredRows[i].Age &gt; filteredRows[j].Age
+//                                }
+//                        case "Name":
+//                                if orderBy == OrderByAsc {
+//                                        return filteredRows[i].Name &lt; filteredRows[j].Name
+//                                } else if orderBy == OrderByDesc {
+//                                        return filteredRows[i].Name &gt; filteredRows[j].Name
+//                                }
+//                        }
+//                        return false
+//                })
+//        }
+//
+//        w.Header().Set("Content-Type", "application/json")
+//        json.NewEncoder(w).Encode(filteredRows)
+//}
+
+//sc := SearchClient{AccessToken: "mycooltoken123", URL: "dataset.xml"}
+//cases := []SearchRequest{
+//SearchRequest{
+//Limit:      10,
+//Offset:     0,
+//Query:      "Name",
+//OrderField: "",
+//OrderBy:    OrderByAsIs,
+//},
+//}
+//
+//for i, cs := range cases {
+//r, err := sc.FindUsers(cs)
+//if err != nil {
+//log.Fatalf("FindUsers Error: %v, caseNum: %v", err, i)
+//}
+//fmt.Println(r)
+//}
+//w.Write([]byte("Hello"))
+
+//func main() { //
+//
+//        orderField := "Name" //default
+//        orderBy := OrderByAsIs
+//        var limit int
+//        maxIterations := 10000
+//        var query string
+//        var offset int
+//        offset = 30
+//
+//        file, err := os.Open("dataset.xml")
+//        if err != nil {
+//                fmt.Println("Ошибка при открытии файла:", err)
+//                return
+//        }
+//
+//        defer func() {
+//                if err := file.Close(); err != nil {
+//                        fmt.Println("Ошибка при закрытии файла:", err)
+//                }
+//        }()
+//
+//        var root Root
+//        decoder := xml.NewDecoder(file)
+//        if err := decoder.Decode(&amp;root); err != nil {
+//                fmt.Println("Ошибка при декодировании XML:", err)
+//                return
+//        }
+//        var filteredRows []Row
+//        cnt := 0
+//        for i, row := range root.Rows {
+//                if i &lt; offset {
+//                        continue
+//                }
+//                if (limit == 0 &amp;&amp; cnt == maxIterations) || (limit &gt; 0 &amp;&amp; cnt == limit) {
+//                        break
+//                }
+//                root.Rows[i].Name = row.FirstName + row.LastName
+//                if !(strings.Contains(strings.ToLower(root.Rows[i].Name), strings.ToLower(query)) ||
+//                        strings.Contains(strings.ToLower(root.Rows[i].About), strings.ToLower(query))) {
+//                        continue
+//                }
+//                filteredRows = append(filteredRows, root.Rows[i])
+//                cnt++
+//        }
+//
+//        switch orderField {
+//        case `Id`, `Age`, `Name`:
+//        default:
+//                fmt.Println(ErrorBadOrderField)
+//                return
+//        }
+//
+//        if orderBy != OrderByAsIs {
+//                sort.SliceStable(filteredRows, func(i, j int) bool {
+//                        switch orderField {
+//                        case "Id":
+//                                if orderBy == OrderByAsc {
+//                                        return filteredRows[i].ID &lt; filteredRows[j].ID
+//                                } else if orderBy == OrderByDesc {
+//                                        return filteredRows[i].ID &gt; filteredRows[j].ID
+//                                }
+//                        case "Age":
+//                                if orderBy == OrderByAsc {
+//                                        return filteredRows[i].Age &lt; filteredRows[j].Age
+//                                } else if orderBy == OrderByDesc {
+//                                        return filteredRows[i].Age &gt; filteredRows[j].Age
+//                                }
+//                        case "Name":
+//                                if orderBy == OrderByAsc {
+//                                        return filteredRows[i].Name &lt; filteredRows[j].Name
+//                                } else if orderBy == OrderByDesc {
+//                                        return filteredRows[i].Name &gt; filteredRows[j].Name
+//                                }
+//                        }
+//                        return false
+//                })
+//        }
+//
+//        for _, row := range filteredRows {
+//                fmt.Printf("ID: %d\nИмя: %s\nВозраст: %d\nAbout: %s\nGender: %s\n\n",
+//                        row.ID, row.Name, row.Age, row.About, row.Gender)
+//        }
+//}
+
+//func main() { //
+//
+//        orderField := "Name" //default
+//        orderBy := OrderByAsIs
+//        var limit int
+//        maxIterations := 10000
+//        var query string
+//        var offset int
+//        offset = 30
+//
+//        file, err := os.Open("dataset.xml")
+//        if err != nil {
+//                fmt.Println("Ошибка при открытии файла:", err)
+//                return
+//        }
+//
+//        defer func() {
+//                if err := file.Close(); err != nil {
+//                        fmt.Println("Ошибка при закрытии файла:", err)
+//                }
+//        }()
+//
+//        var root Root
+//        decoder := xml.NewDecoder(file)
+//        if err := decoder.Decode(&amp;root); err != nil {
+//                fmt.Println("Ошибка при декодировании XML:", err)
+//                return
+//        }
+//        var filteredRows []Row
+//        cnt := 0
+//        for i, row := range root.Rows {
+//                if i &lt; offset {
+//                        continue
+//                }
+//                if (limit == 0 &amp;&amp; cnt == maxIterations) || (limit &gt; 0 &amp;&amp; cnt == limit) {
+//                        break
+//                }
+//                root.Rows[i].Name = row.FirstName + row.LastName
+//                if !(strings.Contains(strings.ToLower(root.Rows[i].Name), strings.ToLower(query)) ||
+//                        strings.Contains(strings.ToLower(root.Rows[i].About), strings.ToLower(query))) {
+//                        continue
+//                }
+//                filteredRows = append(filteredRows, root.Rows[i])
+//                cnt++
+//        }
+//
+//        switch orderField {
+//        case `Id`, `Age`, `Name`:
+//        default:
+//                fmt.Println(ErrorBadOrderField)
+//                return
+//        }
+//
+//        if orderBy != OrderByAsIs {
+//                sort.SliceStable(filteredRows, func(i, j int) bool {
+//                        switch orderField {
+//                        case "Id":
+//                                if orderBy == OrderByAsc {
+//                                        return filteredRows[i].ID &lt; filteredRows[j].ID
+//                                } else if orderBy == OrderByDesc {
+//                                        return filteredRows[i].ID &gt; filteredRows[j].ID
+//                                }
+//                        case "Age":
+//                                if orderBy == OrderByAsc {
+//                                        return filteredRows[i].Age &lt; filteredRows[j].Age
+//                                } else if orderBy == OrderByDesc {
+//                                        return filteredRows[i].Age &gt; filteredRows[j].Age
+//                                }
+//                        case "Name":
+//                                if orderBy == OrderByAsc {
+//                                        return filteredRows[i].Name &lt; filteredRows[j].Name
+//                                } else if orderBy == OrderByDesc {
+//                                        return filteredRows[i].Name &gt; filteredRows[j].Name
+//                                }
+//                        }
+//                        return false
+//                })
+//        }
+//
+//        for _, row := range filteredRows {
+//                fmt.Printf("ID: %d\nИмя: %s\nВозраст: %d\nAbout: %s\nGender: %s\n\n",
+//                        row.ID, row.Name, row.Age, row.About, row.Gender)
+//        }
+//}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
