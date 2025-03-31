@@ -17,7 +17,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	err = db.Ping() // вот тут будет первое подключение к базе
+	err = db.Ping()
 	if err != nil {
 		panic(err)
 	}
