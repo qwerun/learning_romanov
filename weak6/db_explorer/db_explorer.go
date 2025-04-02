@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -29,27 +30,57 @@ func writeErrJson(w http.ResponseWriter, err error, status int) error {
 	return writeJson(w, result, status)
 }
 
+func GetDbInfo(db *sql.DB) ([]Table, error) {
+	var tables []Table
+	tableRows, err := db.Query("SHOW TABLES;")
+	if err != nil {
+		return nil, err
+	}
+	defer tableRows.Close()
+
+	for tableRows.Next() {
+		var table Table
+		err := tableRows.Scan(&table.Name)
+		if err != nil {
+			return nil, err
+		}
+		columnRows, err := db.Query(fmt.Sprintf("SHOW FULL COLUMNS FROM `%s`;", table.Name))
+		if err != nil {
+			return nil, err
+		}
+		defer columnRows.Close()
+		for columnRows.Next() {
+			var columns Column
+			var empty sql.RawBytes
+
+			err := columnRows.Scan(&columns.Name, &empty, &empty, &empty, &empty, &empty, &empty, &empty, &empty)
+
+			if err != nil {
+				return nil, err
+			}
+
+			table.Columns = append(table.Columns, columns)
+		}
+
+		tables = append(tables, table)
+	}
+
+	return tables, nil
+}
+
 func NewDbExplorer(db *sql.DB) (http.Handler, error) {
+	tables, err := GetDbInfo(db)
+
+	if err != nil {
+		return nil, err
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
-			var tables []Table
-			rows, err := db.Query("SHOW TABLES;")
-			if err != nil {
-				_ = writeErrJson(w, err, http.StatusInternalServerError)
-				return
+			var res []string
+			for _, v := range tables {
+				res = append(res, v.Name)
 			}
-
-			for rows.Next() {
-				var table Table
-				err := rows.Scan(&table.Name)
-				if err != nil {
-					_ = writeErrJson(w, err, http.StatusInternalServerError)
-					return
-				}
-				tables = append(tables, table)
-			}
-
-			err = writeJson(w, tables, http.StatusOK)
+			err = writeJson(w, res, http.StatusOK)
 			if err != nil {
 				_ = writeErrJson(w, err, http.StatusInternalServerError)
 				return
@@ -61,6 +92,5 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 			w.Write([]byte("roma!"))
 			return
 		}
-
 	}), nil
 }
