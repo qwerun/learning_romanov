@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 type Table struct {
@@ -68,6 +70,15 @@ func GetDbInfo(db *sql.DB) ([]Table, error) {
 	return tables, nil
 }
 
+func checkTable(tables []Table, table string) string {
+	for _, v := range tables {
+		if table == v.Name {
+			return v.Name
+		}
+	}
+	return ""
+}
+
 func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 	tables, err := GetDbInfo(db)
 
@@ -75,6 +86,42 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 		return nil, err
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		pathParts := strings.Split(r.URL.Path, "/")
+
+		if strings.HasPrefix(r.URL.Path, "/") && len(pathParts) == 2 && pathParts[1] != "" {
+			resCh := checkTable(tables, pathParts[1])
+			if resCh == "" {
+				err := fmt.Errorf("Table '%v' not found!", pathParts[1])
+				_ = writeErrJson(w, err, http.StatusInternalServerError)
+				return
+			}
+			query := r.URL.Query()
+			limit, err := strconv.Atoi(query.Get("limit"))
+			if err != nil {
+				limit = 5
+			}
+			offset, err := strconv.Atoi(query.Get("offset"))
+			if err != nil {
+				offset = 0
+			}
+
+			req, err := db.Query(fmt.Sprintf("select * from %s limit %v offset %v;", pathParts[1], limit, offset))
+			if err != nil {
+				_ = writeErrJson(w, err, http.StatusInternalServerError)
+				return
+			}
+			defer req.Close()
+
+			//columns, err := req.Columns()
+			//if err != nil {
+			//	_ = writeErrJson(w, err, http.StatusInternalServerError)
+			//	return
+			//}
+
+			fmt.Println(req)
+			return
+		}
 		if r.URL.Path == "/" {
 			var res []string
 			for _, v := range tables {
@@ -85,11 +132,6 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 				_ = writeErrJson(w, err, http.StatusInternalServerError)
 				return
 			}
-			return
-		}
-
-		if r.URL.Path == "/roma" {
-			w.Write([]byte("roma!"))
 			return
 		}
 	}), nil
