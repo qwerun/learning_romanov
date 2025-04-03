@@ -113,13 +113,22 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 			}
 			defer req.Close()
 
-			//columns, err := req.Columns()
-			//if err != nil {
-			//	_ = writeErrJson(w, err, http.StatusInternalServerError)
-			//	return
-			//}
+			columns, err := req.Columns() // [id title description updated]
+			if err != nil {
+				_ = writeErrJson(w, err, http.StatusInternalServerError)
+				return
+			}
+			var res []map[string]string
+			for req.Next() {
+				row := make(map[string]string)
+				for _, col := range columns {
+					row[col] = "hello"
+				}
 
-			fmt.Println(req)
+				res = append(res, row)
+			}
+			fmt.Println(res)
+
 			return
 		}
 		if r.URL.Path == "/" {
