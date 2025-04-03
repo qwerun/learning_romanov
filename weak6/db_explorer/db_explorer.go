@@ -113,21 +113,50 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 			}
 			defer req.Close()
 
-			columns, err := req.Columns() // [id title description updated]
-			if err != nil {
-				_ = writeErrJson(w, err, http.StatusInternalServerError)
-				return
+			//columns, err := req.Columns() // [id title description updated]
+			//if err != nil {
+			//	_ = writeErrJson(w, err, http.StatusInternalServerError)
+			//	return
+			//}
+			columnss := []Column{}
+
+			for _, table := range tables {
+				if table.Name == pathParts[1] {
+					columnss = table.Columns
+					break
+				}
 			}
-			var res []map[string]string
+			var result []map[string]any
 			for req.Next() {
-				row := make(map[string]string)
-				for _, col := range columns {
-					row[col] = "hello"
+				row := make(map[string]any)
+				values := make([]any, len(columnss))
+				valuePtrs := make([]any, len(columnss))
+
+				for i := range values {
+					valuePtrs[i] = &values[i]
 				}
 
-				res = append(res, row)
+				err := req.Scan(valuePtrs...)
+				if err != nil {
+					_ = writeErrJson(w, err, http.StatusInternalServerError)
+					return
+				}
+
+				for i, col := range columnss {
+					switch v := values[i].(type) {
+					case []byte:
+						row[col.Name] = string(v)
+					default:
+						row[col.Name] = v
+					}
+				}
+				result = append(result, row)
 			}
-			fmt.Println(res)
+
+			err = writeJson(w, result, http.StatusOK)
+			if err != nil {
+				_ = writeErrJson(w, err, http.StatusInternalServerError)
+			}
 
 			return
 		}
