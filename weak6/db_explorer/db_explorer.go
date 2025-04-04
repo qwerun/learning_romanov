@@ -10,94 +10,137 @@ import (
 )
 
 type Table struct {
-	Name    string `json:"name"`
-	Columns []Column
+	Name    string   `json:"name"`
+	Columns []Column `json:"columns"`
 }
 
 type Column struct {
 	Name string `json:"name"`
 }
 
-func writeJson(w http.ResponseWriter, v any, status int) error {
+type dbExplorer struct {
+	db          *sql.DB
+	cache       []Table
+	pathParts   []string
+	cacheErr    error
+	cacheLoaded bool
+}
+
+func NewDbExplorer(db *sql.DB) (http.Handler, error) {
+	explorer := &dbExplorer{
+		db: db,
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pathParts := strings.Split(r.URL.Path, "/")
+		explorer.pathParts = pathParts
+		if r.URL.Path == "/" {
+			explorer.handleGetAllTables(w, r) // GET /
+			return
+		}
+
+		if len(pathParts) == 2 && pathParts[1] != "" { //GET /$table?limit=5&offset=7
+			explorer.handleGetTableData(w, r)
+			return
+		}
+
+		http.NotFound(w, r)
+	}), nil
+}
+
+func (explorer *dbExplorer) writeJSON(w http.ResponseWriter, v any, status int) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(v)
 }
 
-func writeErrJson(w http.ResponseWriter, err error, status int) error {
+func (explorer *dbExplorer) writeErrJSON(w http.ResponseWriter, err error, status int) error {
 	result := map[string]any{
 		"ok":    false,
 		"error": err.Error(),
 	}
-	return writeJson(w, result, status)
+	return explorer.writeJSON(w, result, status)
 }
 
-func GetDbInfo(db *sql.DB) ([]Table, error) {
-	var tables []Table
-	tableRows, err := db.Query("SHOW TABLES;")
+func (explorer *dbExplorer) GetDbInfo() ([]Table, error) {
+	if explorer.cacheLoaded {
+		return explorer.cache, explorer.cacheErr
+	}
+
+	tableRows, err := explorer.db.Query("SHOW TABLES;")
 	if err != nil {
+		explorer.cacheErr = err
 		return nil, err
 	}
 	defer tableRows.Close()
 
+	var tables []Table
 	for tableRows.Next() {
 		var table Table
-		err := tableRows.Scan(&table.Name)
-		if err != nil {
+		if err := tableRows.Scan(&table.Name); err != nil {
+			explorer.cacheErr = err
 			return nil, err
 		}
-		columnRows, err := db.Query(fmt.Sprintf("SHOW FULL COLUMNS FROM `%s`;", table.Name))
+
+		columnRows, err := explorer.db.Query(fmt.Sprintf("SHOW FULL COLUMNS FROM `%s`;", table.Name))
 		if err != nil {
+			explorer.cacheErr = err
 			return nil, err
 		}
 		defer columnRows.Close()
+
 		for columnRows.Next() {
-			var columns Column
+			var col Column
 			var empty sql.RawBytes
-
-			err := columnRows.Scan(&columns.Name, &empty, &empty, &empty, &empty, &empty, &empty, &empty, &empty)
-
-			if err != nil {
+			if err := columnRows.Scan(&col.Name, &empty, &empty, &empty, &empty, &empty, &empty, &empty, &empty); err != nil {
+				explorer.cacheErr = err
 				return nil, err
 			}
-
-			table.Columns = append(table.Columns, columns)
+			table.Columns = append(table.Columns, col)
 		}
-
 		tables = append(tables, table)
 	}
 
-	return tables, nil
+	explorer.cache = tables
+	explorer.cacheLoaded = true
+	return explorer.cache, nil
 }
 
-func checkTable(tables []Table, table string) string {
-	for _, v := range tables {
-		if table == v.Name {
-			return v.Name
+func (explorer *dbExplorer) checkTable(tables []Table, table string) string {
+	for _, t := range tables {
+		if table == t.Name {
+			return t.Name
 		}
 	}
 	return ""
 }
 
-func handleGetAllTables(w http.ResponseWriter, tables []Table) {
-	var res []string
-	for _, v := range tables {
-		res = append(res, v.Name)
-	}
-	err := writeJson(w, res, http.StatusOK)
+func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Request) {
+	tables, err := explorer.GetDbInfo()
 	if err != nil {
-		_ = writeErrJson(w, err, http.StatusInternalServerError)
+		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 		return
+	}
+	var res []string
+	for _, t := range tables {
+		res = append(res, t.Name)
+	}
+	if err := explorer.writeJSON(w, res, http.StatusOK); err != nil {
+		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 	}
 }
 
-func handleGetTableData(w http.ResponseWriter, r *http.Request, db *sql.DB, tables []Table, pathParts []string) {
-	resCh := checkTable(tables, pathParts[1])
-	if resCh == "" {
-		err := fmt.Errorf("Table '%v' not found!", pathParts[1])
-		_ = writeErrJson(w, err, http.StatusInternalServerError)
+func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Request) {
+	tables, err := explorer.GetDbInfo()
+	if err != nil {
+		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
+	tableName := explorer.pathParts[1]
+	if explorer.checkTable(tables, tableName) == "" {
+		_ = explorer.writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
+		return
+	}
+
 	query := r.URL.Query()
 	limit, err := strconv.Atoi(query.Get("limit"))
 	if err != nil {
@@ -108,39 +151,36 @@ func handleGetTableData(w http.ResponseWriter, r *http.Request, db *sql.DB, tabl
 		offset = 0
 	}
 
-	req, err := db.Query(fmt.Sprintf("select * from %s limit %v offset %v;", pathParts[1], limit, offset))
+	req, err := explorer.db.Query(fmt.Sprintf("SELECT * FROM %s LIMIT %d OFFSET %d;", tableName, limit, offset))
 	if err != nil {
-		_ = writeErrJson(w, err, http.StatusInternalServerError)
+		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 	defer req.Close()
 
-	columnss := []Column{}
-
-	for _, table := range tables {
-		if table.Name == pathParts[1] {
-			columnss = table.Columns
+	var columns []Column
+	for _, t := range tables {
+		if t.Name == tableName {
+			columns = t.Columns
 			break
 		}
 	}
-	var result []map[string]any
 
+	var result []map[string]any
 	for req.Next() {
 		row := make(map[string]any)
-		values := make([]any, len(columnss))
-		valuePtrs := make([]any, len(columnss))
-
+		values := make([]any, len(columns))
+		valuePtrs := make([]any, len(columns))
 		for i := range values {
 			valuePtrs[i] = &values[i]
 		}
 
-		err := req.Scan(valuePtrs...)
-		if err != nil {
-			_ = writeErrJson(w, err, http.StatusInternalServerError)
+		if err := req.Scan(valuePtrs...); err != nil {
+			_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 			return
 		}
 
-		for i, col := range columnss {
+		for i, col := range columns {
 			switch v := values[i].(type) {
 			case []byte:
 				row[col.Name] = string(v)
@@ -151,31 +191,7 @@ func handleGetTableData(w http.ResponseWriter, r *http.Request, db *sql.DB, tabl
 		result = append(result, row)
 	}
 
-	err = writeJson(w, result, http.StatusOK)
-	if err != nil {
-		_ = writeErrJson(w, err, http.StatusInternalServerError)
+	if err := explorer.writeJSON(w, result, http.StatusOK); err != nil {
+		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 	}
-}
-
-func NewDbExplorer(db *sql.DB) (http.Handler, error) {
-	tables, err := GetDbInfo(db)
-
-	if err != nil {
-		return nil, err
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-		pathParts := strings.Split(r.URL.Path, "/")
-
-		if strings.HasPrefix(r.URL.Path, "/") && len(pathParts) == 2 && pathParts[1] != "" {
-			handleGetTableData(w, r, db, tables, pathParts)
-			return
-
-		}
-
-		if r.URL.Path == "/" {
-			handleGetAllTables(w, tables)
-			return
-		}
-	}), nil
 }
