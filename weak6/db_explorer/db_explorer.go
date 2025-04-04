@@ -151,6 +151,17 @@ func (explorer *dbExplorer) parseId() (int, error) {
 	return id, err
 }
 
+func (explorer *dbExplorer) getColumns(tableName string) []Column {
+	var columns []Column
+	for _, t := range explorer.cache {
+		if t.Name == tableName {
+			columns = t.Columns
+			break
+		}
+	}
+	return columns
+}
+
 func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Request) {
 	err := explorer.getDbInfo()
 	if err != nil {
@@ -164,17 +175,6 @@ func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Re
 	if err := explorer.writeJSON(w, res, http.StatusOK); err != nil {
 		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 	}
-}
-
-func (explorer *dbExplorer) getColumns(tableName string) []Column {
-	var columns []Column
-	for _, t := range explorer.cache {
-		if t.Name == tableName {
-			columns = t.Columns
-			break
-		}
-	}
-	return columns
 }
 
 func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Request) {
@@ -201,13 +201,6 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 	}
 	defer req.Close()
 	columns := explorer.getColumns(tableName)
-	//var columns []Column
-	//for _, t := range tables {
-	//	if t.Name == tableName {
-	//		columns = t.Columns
-	//		break
-	//	}
-	//}
 
 	var result []map[string]any
 	for req.Next() {
@@ -247,13 +240,13 @@ func (explorer *dbExplorer) handlerGetById(w http.ResponseWriter, r *http.Reques
 
 	columns := explorer.getColumns(tableName)
 
-	row, err := explorer.dbRowToMap(req, columns)
+	result, err := explorer.dbRowToMap(req, columns)
 	if err != nil {
 		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 
-	if err := explorer.writeJSON(w, row, http.StatusOK); err != nil {
+	if err := explorer.writeJSON(w, result, http.StatusOK); err != nil {
 		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 	}
 }
