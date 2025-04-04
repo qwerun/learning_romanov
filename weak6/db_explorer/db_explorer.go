@@ -79,6 +79,84 @@ func checkTable(tables []Table, table string) string {
 	return ""
 }
 
+func handleGetAllTables(w http.ResponseWriter, tables []Table) {
+	var res []string
+	for _, v := range tables {
+		res = append(res, v.Name)
+	}
+	err := writeJson(w, res, http.StatusOK)
+	if err != nil {
+		_ = writeErrJson(w, err, http.StatusInternalServerError)
+		return
+	}
+}
+
+func handleGetTableData(w http.ResponseWriter, r *http.Request, db *sql.DB, tables []Table, pathParts []string) {
+	resCh := checkTable(tables, pathParts[1])
+	if resCh == "" {
+		err := fmt.Errorf("Table '%v' not found!", pathParts[1])
+		_ = writeErrJson(w, err, http.StatusInternalServerError)
+		return
+	}
+	query := r.URL.Query()
+	limit, err := strconv.Atoi(query.Get("limit"))
+	if err != nil {
+		limit = 5
+	}
+	offset, err := strconv.Atoi(query.Get("offset"))
+	if err != nil {
+		offset = 0
+	}
+
+	req, err := db.Query(fmt.Sprintf("select * from %s limit %v offset %v;", pathParts[1], limit, offset))
+	if err != nil {
+		_ = writeErrJson(w, err, http.StatusInternalServerError)
+		return
+	}
+	defer req.Close()
+
+	columnss := []Column{}
+
+	for _, table := range tables {
+		if table.Name == pathParts[1] {
+			columnss = table.Columns
+			break
+		}
+	}
+	var result []map[string]any
+
+	for req.Next() {
+		row := make(map[string]any)
+		values := make([]any, len(columnss))
+		valuePtrs := make([]any, len(columnss))
+
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		err := req.Scan(valuePtrs...)
+		if err != nil {
+			_ = writeErrJson(w, err, http.StatusInternalServerError)
+			return
+		}
+
+		for i, col := range columnss {
+			switch v := values[i].(type) {
+			case []byte:
+				row[col.Name] = string(v)
+			default:
+				row[col.Name] = v
+			}
+		}
+		result = append(result, row)
+	}
+
+	err = writeJson(w, result, http.StatusOK)
+	if err != nil {
+		_ = writeErrJson(w, err, http.StatusInternalServerError)
+	}
+}
+
 func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 	tables, err := GetDbInfo(db)
 
@@ -90,86 +168,13 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 		pathParts := strings.Split(r.URL.Path, "/")
 
 		if strings.HasPrefix(r.URL.Path, "/") && len(pathParts) == 2 && pathParts[1] != "" {
-			resCh := checkTable(tables, pathParts[1])
-			if resCh == "" {
-				err := fmt.Errorf("Table '%v' not found!", pathParts[1])
-				_ = writeErrJson(w, err, http.StatusInternalServerError)
-				return
-			}
-			query := r.URL.Query()
-			limit, err := strconv.Atoi(query.Get("limit"))
-			if err != nil {
-				limit = 5
-			}
-			offset, err := strconv.Atoi(query.Get("offset"))
-			if err != nil {
-				offset = 0
-			}
-
-			req, err := db.Query(fmt.Sprintf("select * from %s limit %v offset %v;", pathParts[1], limit, offset))
-			if err != nil {
-				_ = writeErrJson(w, err, http.StatusInternalServerError)
-				return
-			}
-			defer req.Close()
-
-			//columns, err := req.Columns() // [id title description updated]
-			//if err != nil {
-			//	_ = writeErrJson(w, err, http.StatusInternalServerError)
-			//	return
-			//}
-			columnss := []Column{}
-
-			for _, table := range tables {
-				if table.Name == pathParts[1] {
-					columnss = table.Columns
-					break
-				}
-			}
-			var result []map[string]any
-			for req.Next() {
-				row := make(map[string]any)
-				values := make([]any, len(columnss))
-				valuePtrs := make([]any, len(columnss))
-
-				for i := range values {
-					valuePtrs[i] = &values[i]
-				}
-
-				err := req.Scan(valuePtrs...)
-				if err != nil {
-					_ = writeErrJson(w, err, http.StatusInternalServerError)
-					return
-				}
-
-				for i, col := range columnss {
-					switch v := values[i].(type) {
-					case []byte:
-						row[col.Name] = string(v)
-					default:
-						row[col.Name] = v
-					}
-				}
-				result = append(result, row)
-			}
-
-			err = writeJson(w, result, http.StatusOK)
-			if err != nil {
-				_ = writeErrJson(w, err, http.StatusInternalServerError)
-			}
-
+			handleGetTableData(w, r, db, tables, pathParts)
 			return
+
 		}
+
 		if r.URL.Path == "/" {
-			var res []string
-			for _, v := range tables {
-				res = append(res, v.Name)
-			}
-			err = writeJson(w, res, http.StatusOK)
-			if err != nil {
-				_ = writeErrJson(w, err, http.StatusInternalServerError)
-				return
-			}
+			handleGetAllTables(w, tables)
 			return
 		}
 	}), nil
