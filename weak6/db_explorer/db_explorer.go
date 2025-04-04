@@ -70,15 +70,15 @@ func (explorer *dbExplorer) writeErrJSON(w http.ResponseWriter, err error, statu
 	return explorer.writeJSON(w, result, status)
 }
 
-func (explorer *dbExplorer) getDbInfo() ([]Table, error) {
+func (explorer *dbExplorer) getDbInfo() error {
 	if explorer.cacheLoaded {
-		return explorer.cache, explorer.cacheErr
+		return explorer.cacheErr
 	}
 
 	tableRows, err := explorer.db.Query("SHOW TABLES;")
 	if err != nil {
 		explorer.cacheErr = err
-		return nil, err
+		return err
 	}
 	defer tableRows.Close()
 
@@ -87,13 +87,13 @@ func (explorer *dbExplorer) getDbInfo() ([]Table, error) {
 		var table Table
 		if err := tableRows.Scan(&table.Name); err != nil {
 			explorer.cacheErr = err
-			return nil, err
+			return err
 		}
 
 		columnRows, err := explorer.db.Query(fmt.Sprintf("SHOW FULL COLUMNS FROM `%s`;", table.Name))
 		if err != nil {
 			explorer.cacheErr = err
-			return nil, err
+			return err
 		}
 		defer columnRows.Close()
 
@@ -102,7 +102,7 @@ func (explorer *dbExplorer) getDbInfo() ([]Table, error) {
 			var empty sql.RawBytes
 			if err := columnRows.Scan(&col.Name, &empty, &empty, &empty, &empty, &empty, &empty, &empty, &empty); err != nil {
 				explorer.cacheErr = err
-				return nil, err
+				return err
 			}
 			table.Columns = append(table.Columns, col)
 		}
@@ -111,11 +111,11 @@ func (explorer *dbExplorer) getDbInfo() ([]Table, error) {
 
 	explorer.cache = tables
 	explorer.cacheLoaded = true
-	return explorer.cache, nil
+	return nil
 }
 
-func (explorer *dbExplorer) checkTable(tables []Table, table string) string {
-	for _, t := range tables {
+func (explorer *dbExplorer) checkTable(table string) string {
+	for _, t := range explorer.cache {
 		if table == t.Name {
 			return t.Name
 		}
@@ -145,14 +145,20 @@ func (explorer *dbExplorer) dbRowToMap(scanner rowScanner, columns []Column) (ma
 	return row, nil
 }
 
+func (explorer *dbExplorer) parseId() (int, error) {
+	idStr := explorer.pathParts[2]
+	id, err := strconv.Atoi(idStr)
+	return id, err
+}
+
 func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Request) {
-	tables, err := explorer.getDbInfo()
+	err := explorer.getDbInfo()
 	if err != nil {
 		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 	var res []string
-	for _, t := range tables {
+	for _, t := range explorer.cache {
 		res = append(res, t.Name)
 	}
 	if err := explorer.writeJSON(w, res, http.StatusOK); err != nil {
@@ -160,14 +166,20 @@ func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Re
 	}
 }
 
-func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Request) {
-	tables, err := explorer.getDbInfo()
-	if err != nil {
-		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
-		return
+func (explorer *dbExplorer) getColumns(tableName string) []Column {
+	var columns []Column
+	for _, t := range explorer.cache {
+		if t.Name == tableName {
+			columns = t.Columns
+			break
+		}
 	}
+	return columns
+}
+
+func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Request) {
 	tableName := explorer.pathParts[1]
-	if explorer.checkTable(tables, tableName) == "" {
+	if explorer.checkTable(tableName) == "" {
 		_ = explorer.writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
 		return
 	}
@@ -188,14 +200,14 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 		return
 	}
 	defer req.Close()
-
-	var columns []Column
-	for _, t := range tables {
-		if t.Name == tableName {
-			columns = t.Columns
-			break
-		}
-	}
+	columns := explorer.getColumns(tableName)
+	//var columns []Column
+	//for _, t := range tables {
+	//	if t.Name == tableName {
+	//		columns = t.Columns
+	//		break
+	//	}
+	//}
 
 	var result []map[string]any
 	for req.Next() {
@@ -213,18 +225,19 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 }
 
 func (explorer *dbExplorer) handlerGetById(w http.ResponseWriter, r *http.Request) {
-	tables, err := explorer.getDbInfo()
+	err := explorer.getDbInfo()
 	if err != nil {
 		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
+
 	tableName := explorer.pathParts[1]
-	if explorer.checkTable(tables, tableName) == "" {
+
+	if explorer.checkTable(tableName) == "" {
 		_ = explorer.writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
 		return
 	}
-	idStr := explorer.pathParts[2]
-	id, err := strconv.Atoi(idStr)
+	id, err := explorer.parseId()
 	if err != nil {
 		_ = explorer.writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
 		return
@@ -232,13 +245,7 @@ func (explorer *dbExplorer) handlerGetById(w http.ResponseWriter, r *http.Reques
 
 	req := explorer.db.QueryRow(fmt.Sprintf("SELECT * FROM %s WHERE id = ?;", tableName), id)
 
-	var columns []Column
-	for _, t := range tables {
-		if t.Name == tableName {
-			columns = t.Columns
-			break
-		}
-	}
+	columns := explorer.getColumns(tableName)
 
 	row, err := explorer.dbRowToMap(req, columns)
 	if err != nil {
