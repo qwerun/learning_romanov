@@ -37,6 +37,10 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pathParts := strings.Split(r.URL.Path, "/")
 		explorer.pathParts = pathParts
+		//if r.Method == http.MethodPost && len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] != "" { //POST /$table/$id
+		//	explorer.handlePostById(w, r)
+		//}
+
 		if r.URL.Path == "/" {
 			explorer.handleGetAllTables(w, r) // GET /
 			return
@@ -48,7 +52,7 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 		}
 
 		if len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] != "" { //GET /$table/$id
-			explorer.handlerGetById(w, r)
+			explorer.handleGetById(w, r)
 			return
 		}
 
@@ -56,18 +60,40 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 	}), nil
 }
 
-func (explorer *dbExplorer) writeJSON(w http.ResponseWriter, v any, status int) error {
+func writeJSON(w http.ResponseWriter, v any, status int) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(v)
 }
 
-func (explorer *dbExplorer) writeErrJSON(w http.ResponseWriter, err error, status int) error {
+func writeErrJSON(w http.ResponseWriter, err error, status int) error {
 	result := map[string]any{
 		"ok":    false,
 		"error": err.Error(),
 	}
-	return explorer.writeJSON(w, result, status)
+	return writeJSON(w, result, status)
+}
+
+func dbRowToMap(scanner rowScanner, columns []Column) (map[string]any, error) {
+	row := make(map[string]any)
+	values := make([]any, len(columns))
+	valuePtrs := make([]any, len(columns))
+	for i := range values {
+		valuePtrs[i] = &values[i]
+	}
+
+	if err := scanner.Scan(valuePtrs...); err != nil {
+		return nil, err
+	}
+	for i, col := range columns {
+		switch v := values[i].(type) {
+		case []byte:
+			row[col.Name] = string(v)
+		default:
+			row[col.Name] = v
+		}
+	}
+	return row, nil
 }
 
 func (explorer *dbExplorer) getDbInfo() error {
@@ -123,28 +149,6 @@ func (explorer *dbExplorer) checkTable(table string) string {
 	return ""
 }
 
-func (explorer *dbExplorer) dbRowToMap(scanner rowScanner, columns []Column) (map[string]any, error) {
-	row := make(map[string]any)
-	values := make([]any, len(columns))
-	valuePtrs := make([]any, len(columns))
-	for i := range values {
-		valuePtrs[i] = &values[i]
-	}
-
-	if err := scanner.Scan(valuePtrs...); err != nil {
-		return nil, err
-	}
-	for i, col := range columns {
-		switch v := values[i].(type) {
-		case []byte:
-			row[col.Name] = string(v)
-		default:
-			row[col.Name] = v
-		}
-	}
-	return row, nil
-}
-
 func (explorer *dbExplorer) parseId() (int, error) {
 	idStr := explorer.pathParts[2]
 	id, err := strconv.Atoi(idStr)
@@ -165,22 +169,22 @@ func (explorer *dbExplorer) getColumns(tableName string) []Column {
 func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Request) {
 	err := explorer.getDbInfo()
 	if err != nil {
-		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 	var res []string
 	for _, t := range explorer.cache {
 		res = append(res, t.Name)
 	}
-	if err := explorer.writeJSON(w, res, http.StatusOK); err != nil {
-		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+	if err := writeJSON(w, res, http.StatusOK); err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 	}
 }
 
 func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Request) {
 	tableName := explorer.pathParts[1]
 	if explorer.checkTable(tableName) == "" {
-		_ = explorer.writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
+		_ = writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
 		return
 	}
 
@@ -196,7 +200,7 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 
 	req, err := explorer.db.Query(fmt.Sprintf("SELECT * FROM %s LIMIT ? OFFSET ?;", tableName), limit, offset)
 	if err != nil {
-		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 	defer req.Close()
@@ -204,35 +208,35 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 
 	var result []map[string]any
 	for req.Next() {
-		row, err := explorer.dbRowToMap(req, columns)
+		row, err := dbRowToMap(req, columns)
 		if err != nil {
-			_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+			_ = writeErrJSON(w, err, http.StatusInternalServerError)
 			return
 		}
 		result = append(result, row)
 	}
 
-	if err := explorer.writeJSON(w, result, http.StatusOK); err != nil {
-		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+	if err := writeJSON(w, result, http.StatusOK); err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 	}
 }
 
-func (explorer *dbExplorer) handlerGetById(w http.ResponseWriter, r *http.Request) {
+func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request) {
 	err := explorer.getDbInfo()
 	if err != nil {
-		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 
 	tableName := explorer.pathParts[1]
 
 	if explorer.checkTable(tableName) == "" {
-		_ = explorer.writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
+		_ = writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
 		return
 	}
 	id, err := explorer.parseId()
 	if err != nil {
-		_ = explorer.writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
+		_ = writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
 		return
 	}
 
@@ -240,13 +244,47 @@ func (explorer *dbExplorer) handlerGetById(w http.ResponseWriter, r *http.Reques
 
 	columns := explorer.getColumns(tableName)
 
-	result, err := explorer.dbRowToMap(req, columns)
+	result, err := dbRowToMap(req, columns)
 	if err != nil {
-		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 
-	if err := explorer.writeJSON(w, result, http.StatusOK); err != nil {
-		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+	if err := writeJSON(w, result, http.StatusOK); err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 	}
 }
+
+//func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Request) {
+//	err := explorer.getDbInfo()
+//	if err != nil {
+//		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+//		return
+//	}
+//
+//	tableName := explorer.pathParts[1]
+//
+//	if explorer.checkTable(tableName) == "" {
+//		_ = explorer.writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
+//		return
+//	}
+//	id, err := explorer.parseId()
+//	if err != nil {
+//		_ = explorer.writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
+//		return
+//	}
+//
+//	req := explorer.db.QueryRow(fmt.Sprintf("SELECT * FROM %s WHERE id = ?;", tableName), id)
+//
+//	columns := explorer.getColumns(tableName)
+//
+//	result, err := explorer.dbRowToMap(req, columns)
+//	if err != nil {
+//		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+//		return
+//	}
+//
+//	if err := explorer.writeJSON(w, result, http.StatusOK); err != nil {
+//		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
+//	}
+//}
