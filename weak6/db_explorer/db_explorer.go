@@ -226,6 +226,21 @@ func (explorer *dbExplorer) getColumns(tableName string) []Column {
 	return columns
 }
 
+func (explorer *dbExplorer) getPKColumn(tableName string) (string, error) {
+	query := `
+		SELECT COLUMN_NAME
+		FROM information_schema.KEY_COLUMN_USAGE
+		WHERE TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY'
+		LIMIT 1;
+	`
+	row := explorer.db.QueryRow(query, tableName)
+	var pkColumn string
+	if err := row.Scan(&pkColumn); err != nil {
+		return "", err
+	}
+	return pkColumn, nil
+}
+
 func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Request) {
 	err := explorer.getDbInfo()
 	if err != nil {
@@ -405,7 +420,9 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 	}
 
 	response := CR{
-		"updated": rowsAffected,
+		"response": CR{
+			"updated": rowsAffected,
+		},
 	}
 
 	if err := writeJSON(w, response, http.StatusOK); err != nil {
@@ -468,8 +485,16 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pkColumn, err := explorer.getPKColumn(tableName)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
 	response := CR{
-		"id": lastId,
+		"response": CR{
+			pkColumn: lastId,
+		},
 	}
 
 	if err := writeJSON(w, response, http.StatusOK); err != nil {
