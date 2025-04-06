@@ -15,12 +15,14 @@ type Table struct {
 }
 
 type Column struct {
-	Name string `json:"name"`
+	Name  string `json:"name"`
+	Types string `json:"types"`
+	Null  string `json:"null"`
 }
 
 type dbExplorer struct {
 	db          *sql.DB
-	cache       []Table
+	tableInfo   []Table
 	pathParts   []string
 	cacheErr    error
 	cacheLoaded bool
@@ -142,27 +144,67 @@ func (explorer *dbExplorer) getDbInfo() error {
 		for columnRows.Next() {
 			var col Column
 			var empty sql.RawBytes
-			if err := columnRows.Scan(&col.Name, &empty, &empty, &empty, &empty, &empty, &empty, &empty, &empty); err != nil {
+			if err := columnRows.Scan(&col.Name, &col.Types, &empty, &col.Null, &empty, &empty, &empty, &empty, &empty); err != nil {
 				explorer.cacheErr = err
 				return err
 			}
 			table.Columns = append(table.Columns, col)
+
 		}
 		tables = append(tables, table)
 	}
 
-	explorer.cache = tables
+	explorer.tableInfo = tables
 	explorer.cacheLoaded = true
 	return nil
 }
 
 func (explorer *dbExplorer) checkTable(table string) string {
-	for _, t := range explorer.cache {
+	for _, t := range explorer.tableInfo {
 		if table == t.Name {
 			return t.Name
 		}
 	}
 	return ""
+}
+
+func (explorer *dbExplorer) checkBody(tableName string, updates CR) CR {
+	var tableInfo Table
+	for _, v := range explorer.tableInfo {
+		if v.Name == tableName {
+			tableInfo = v
+		}
+	}
+
+	for columnName, value := range updates {
+		var colDef *Column
+		for _, col := range tableInfo.Columns {
+			if col.Name == columnName {
+				colDef = &col
+				break
+			}
+		}
+		if colDef == nil {
+			return CR{"error": fmt.Sprintf("unknown column %s", columnName)}
+		}
+
+		if colDef.Null == "NO" && value == nil {
+			return CR{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+		}
+
+		if strings.HasPrefix(colDef.Types, "varchar") || colDef.Types == "text" {
+			if _, ok := value.(string); !ok {
+				return CR{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+			}
+		}
+
+		if strings.HasPrefix(colDef.Types, "int") {
+			if _, ok := value.(float64); !ok {
+				return CR{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+			}
+		}
+	}
+	return nil
 }
 
 func (explorer *dbExplorer) parseId() (int, error) {
@@ -173,7 +215,7 @@ func (explorer *dbExplorer) parseId() (int, error) {
 
 func (explorer *dbExplorer) getColumns(tableName string) []Column {
 	var columns []Column
-	for _, t := range explorer.cache {
+	for _, t := range explorer.tableInfo {
 		if t.Name == tableName {
 			columns = t.Columns
 			break
@@ -189,7 +231,7 @@ func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var res []string
-	for _, t := range explorer.cache {
+	for _, t := range explorer.tableInfo {
 		res = append(res, t.Name)
 	}
 	response := CR{
@@ -327,6 +369,10 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 		_ = writeJSON(w, CR{"error": "field id have invalid type"}, http.StatusBadRequest)
 		return
 	}
+	errMessege := explorer.checkBody(tableName, updates)
+	if err != nil {
+		_ = writeJSON(w, errMessege, http.StatusBadRequest)
+	}
 
 	setParts := make([]string, 0, len(updates))
 	params := make([]interface{}, 0, len(updates)+1)
@@ -365,39 +411,3 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 	}
 	return
 }
-
-//
-//Case{
-//Path:   "/items/3",
-//Method: http.MethodPost,
-//Status: http.StatusBadRequest,
-//Body: CR{
-//"title": 42,
-//},
-//Result: CR{
-//"error": "field title have invalid type",
-//},
-//},
-//Case{
-//Path:   "/items/3",
-//Method: http.MethodPost,
-//Status: http.StatusBadRequest,
-//Body: CR{
-//"title": nil,
-//},
-//Result: CR{
-//"error": "field title have invalid type",
-//},
-//},
-//
-//Case{
-//Path:   "/items/3",
-//Method: http.MethodPost,
-//Status: http.StatusBadRequest,
-//Body: CR{
-//"updated": 42,
-//},
-//Result: CR{
-//"error": "field updated have invalid type",
-//},
-//},
