@@ -39,22 +39,23 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pathParts := strings.Split(r.URL.Path, "/")
 		explorer.pathParts = pathParts
-		//if r.Method == http.MethodPost && len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] != "" { //POST /$table/$id
-		//	explorer.handlePostById(w, r)
-		//}
+		if r.Method == http.MethodPost && len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] != "" {
+			explorer.handlePostById(w, r) //POST /$table/$id
+			return
+		}
 
 		if r.URL.Path == "/" {
 			explorer.handleGetAllTables(w, r) // GET /
 			return
 		}
 
-		if len(pathParts) == 2 && pathParts[1] != "" { //GET /$table?limit=5&offset=7
-			explorer.handleGetTableData(w, r)
+		if len(pathParts) == 2 && pathParts[1] != "" {
+			explorer.handleGetTableData(w, r) //GET /$table?limit=5&offset=7
 			return
 		}
 
-		if len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] != "" { //GET /$table/$id
-			explorer.handleGetById(w, r)
+		if len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] != "" {
+			explorer.handleGetById(w, r) //GET /$table/$id
 			return
 		}
 
@@ -94,10 +95,13 @@ func dbRowToMap(scanner rowScanner, columns []Column) (CR, error) {
 		switch v := val.(type) {
 		case nil:
 			row[col.Name] = nil
+
 		case []byte:
 			s := string(v)
 			if iVal, err := strconv.Atoi(s); err == nil {
 				row[col.Name] = iVal
+			} else if fVal, err := strconv.ParseFloat(s, 64); err == nil {
+				row[col.Name] = fVal
 			} else {
 				row[col.Name] = s
 			}
@@ -293,37 +297,107 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 	}
 }
 
+func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Request) {
+	err := explorer.getDbInfo()
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	tableName := explorer.pathParts[1]
+
+	if explorer.checkTable(tableName) == "" {
+		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
+		return
+	}
+	id, err := explorer.parseId()
+	if err != nil {
+		_ = writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	var updates CR
+	err = json.NewDecoder(r.Body).Decode(&updates)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+	defer r.Body.Close()
+	if updates["id"] != nil {
+		_ = writeJSON(w, CR{"error": "field id have invalid type"}, http.StatusBadRequest)
+		return
+	}
+
+	setParts := make([]string, 0, len(updates))
+	params := make([]interface{}, 0, len(updates)+1)
+
+	for columnName, value := range updates {
+		setParts = append(setParts, fmt.Sprintf("%s = ?", columnName))
+		params = append(params, value)
+	}
+
+	params = append(params, id)
+
+	sqlQuery := fmt.Sprintf(`
+        UPDATE %s 
+        SET %s 
+        WHERE id = ?;
+    `, tableName, strings.Join(setParts, ", "))
+
+	result, err := explorer.db.Exec(sqlQuery, params...)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	response := CR{
+		"updated": rowsAffected,
+	}
+
+	if err := writeJSON(w, response, http.StatusOK); err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+	}
+	return
+}
+
 //
-//func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Request) {
-//	err := explorer.getDbInfo()
-//	if err != nil {
-//		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
-//		return
-//	}
+//Case{
+//Path:   "/items/3",
+//Method: http.MethodPost,
+//Status: http.StatusBadRequest,
+//Body: CR{
+//"title": 42,
+//},
+//Result: CR{
+//"error": "field title have invalid type",
+//},
+//},
+//Case{
+//Path:   "/items/3",
+//Method: http.MethodPost,
+//Status: http.StatusBadRequest,
+//Body: CR{
+//"title": nil,
+//},
+//Result: CR{
+//"error": "field title have invalid type",
+//},
+//},
 //
-//	tableName := explorer.pathParts[1]
-//
-//	if explorer.checkTable(tableName) == "" {
-//		_ = explorer.writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
-//		return
-//	}
-//	id, err := explorer.parseId()
-//	if err != nil {
-//		_ = explorer.writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
-//		return
-//	}
-//
-//	req := explorer.db.QueryRow(fmt.Sprintf("SELECT * FROM %s WHERE id = ?;", tableName), id)
-//
-//	columns := explorer.getColumns(tableName)
-//
-//	result, err := explorer.dbRowToMap(req, columns)
-//	if err != nil {
-//		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
-//		return
-//	}
-//
-//	if err := explorer.writeJSON(w, result, http.StatusOK); err != nil {
-//		_ = explorer.writeErrJSON(w, err, http.StatusInternalServerError)
-//	}
-//}
+//Case{
+//Path:   "/items/3",
+//Method: http.MethodPost,
+//Status: http.StatusBadRequest,
+//Body: CR{
+//"updated": 42,
+//},
+//Result: CR{
+//"error": "field updated have invalid type",
+//},
+//},
