@@ -80,6 +80,7 @@ func dbRowToMap(scanner rowScanner, columns []Column) (CR, error) {
 	row := CR{}
 	values := make([]any, len(columns))
 	valuePtrs := make([]any, len(columns))
+
 	for i := range values {
 		valuePtrs[i] = &values[i]
 	}
@@ -87,10 +88,19 @@ func dbRowToMap(scanner rowScanner, columns []Column) (CR, error) {
 	if err := scanner.Scan(valuePtrs...); err != nil {
 		return nil, err
 	}
+
 	for i, col := range columns {
-		switch v := values[i].(type) {
+		val := values[i]
+		switch v := val.(type) {
+		case nil:
+			row[col.Name] = nil
 		case []byte:
-			row[col.Name] = string(v)
+			s := string(v)
+			if iVal, err := strconv.Atoi(s); err == nil {
+				row[col.Name] = iVal
+			} else {
+				row[col.Name] = s
+			}
 		default:
 			row[col.Name] = v
 		}
@@ -267,7 +277,7 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 
 	row, err := dbRowToMap(req, columns)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CR{"error": "record not found"}, http.StatusNotFound)
 		return
 	}
 	result = append(result, row)
@@ -283,6 +293,7 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 	}
 }
 
+//
 //func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Request) {
 //	err := explorer.getDbInfo()
 //	if err != nil {
