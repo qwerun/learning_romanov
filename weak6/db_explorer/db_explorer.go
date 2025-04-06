@@ -41,6 +41,10 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pathParts := strings.Split(r.URL.Path, "/")
 		explorer.pathParts = pathParts
+		if r.Method == http.MethodDelete && len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] != "" {
+			explorer.handleDeleteById(w, r) //DELETE /$table/$id
+			return
+		}
 		if r.Method == http.MethodPut && len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] == "" {
 			explorer.handlePut(w, r) // PUT /$table/
 			return
@@ -382,8 +386,13 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer r.Body.Close()
-	if updates["id"] != nil {
-		_ = writeJSON(w, CR{"error": "field id have invalid type"}, http.StatusBadRequest)
+	pkColumn, err := explorer.getPKColumn(tableName)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+	if updates[pkColumn] != nil {
+		_ = writeJSON(w, CR{"error": fmt.Sprintf("field %s have invalid type", pkColumn)}, http.StatusBadRequest)
 		return
 	}
 	errMessege := explorer.checkBody(tableName, updates)
@@ -494,6 +503,53 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 	response := CR{
 		"response": CR{
 			pkColumn: lastId,
+		},
+	}
+
+	if err := writeJSON(w, response, http.StatusOK); err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+	}
+	return
+}
+
+func (explorer *dbExplorer) handleDeleteById(w http.ResponseWriter, r *http.Request) {
+	err := explorer.getDbInfo()
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	tableName := explorer.pathParts[1]
+
+	if explorer.checkTable(tableName) == "" {
+		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
+		return
+	}
+	id, err := explorer.parseId()
+	if err != nil {
+		_ = writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	sqlQuery := fmt.Sprintf(`
+        DELETE FROM %s
+        WHERE id = ?;`, tableName)
+
+	result, err := explorer.db.Exec(sqlQuery, id)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	response := CR{
+		"response": CR{
+			"deleted": rowsAffected,
 		},
 	}
 
