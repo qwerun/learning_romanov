@@ -28,13 +28,16 @@ type dbExplorer struct {
 	cacheLoaded bool
 }
 
-type CR map[string]interface{}
+type CT map[string]interface{}
 
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
 func NewDbExplorer(db *sql.DB) (http.Handler, error) {
+	//db.SetMaxOpenConns(1)
+	//db.SetMaxIdleConns(1)
+	//db.SetConnMaxLifetime(time.Second * 5)
 	explorer := &dbExplorer{
 		db: db,
 	}
@@ -69,6 +72,7 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 
 		http.NotFound(w, r)
 	}), nil
+
 }
 
 func writeJSON(w http.ResponseWriter, v any, status int) error {
@@ -85,8 +89,8 @@ func writeErrJSON(w http.ResponseWriter, err error, status int) error {
 	return writeJSON(w, result, status)
 }
 
-func dbRowToMap(scanner rowScanner, columns []Column) (CR, error) {
-	row := CR{}
+func dbRowToMap(scanner rowScanner, columns []Column) (CT, error) {
+	row := CT{}
 	values := make([]any, len(columns))
 	valuePtrs := make([]any, len(columns))
 
@@ -145,18 +149,23 @@ func (explorer *dbExplorer) getDbInfo() error {
 			explorer.cacheErr = err
 			return err
 		}
-		defer columnRows.Close()
 
 		for columnRows.Next() {
 			var col Column
 			var empty sql.RawBytes
 			if err := columnRows.Scan(&col.Name, &col.Types, &empty, &col.Null, &empty, &empty, &empty, &empty, &empty); err != nil {
+				columnRows.Close()
 				explorer.cacheErr = err
 				return err
 			}
 			table.Columns = append(table.Columns, col)
-
 		}
+
+		if err = columnRows.Close(); err != nil {
+			explorer.cacheErr = err
+			return err
+		}
+
 		tables = append(tables, table)
 	}
 
@@ -174,7 +183,7 @@ func (explorer *dbExplorer) checkTable(table string) string {
 	return ""
 }
 
-func (explorer *dbExplorer) checkBody(tableName string, updates CR) CR {
+func (explorer *dbExplorer) checkBody(tableName string, updates CT) CT {
 	var tableInfo Table
 	for _, v := range explorer.tableInfo {
 		if v.Name == tableName {
@@ -191,22 +200,22 @@ func (explorer *dbExplorer) checkBody(tableName string, updates CR) CR {
 			}
 		}
 		if colDef == nil {
-			return CR{"error": fmt.Sprintf("unknown column %s", columnName)}
+			return CT{"error": fmt.Sprintf("unknown column %s", columnName)}
 		}
 
 		if colDef.Null == "NO" && value == nil {
-			return CR{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+			return CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
 		}
 
 		if strings.HasPrefix(colDef.Types, "varchar") || colDef.Types == "text" {
 			if _, ok := value.(string); !ok {
-				return CR{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+				return CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
 			}
 		}
 
 		if strings.HasPrefix(colDef.Types, "int") {
 			if _, ok := value.(float64); !ok {
-				return CR{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+				return CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
 			}
 		}
 	}
@@ -255,8 +264,8 @@ func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Re
 	for _, t := range explorer.tableInfo {
 		res = append(res, t.Name)
 	}
-	response := CR{
-		"response": CR{
+	response := CT{
+		"response": CT{
 			"tables": res,
 		},
 	}
@@ -274,7 +283,7 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 	}
 	tableName := explorer.pathParts[1]
 	if explorer.checkTable(tableName) == "" {
-		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
+		_ = writeJSON(w, CT{"error": "unknown table"}, http.StatusNotFound)
 		return
 	}
 
@@ -296,7 +305,7 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 	defer req.Close()
 	columns := explorer.getColumns(tableName)
 
-	var result []CR
+	var result []CT
 	for req.Next() {
 		row, err := dbRowToMap(req, columns)
 		if err != nil {
@@ -306,8 +315,8 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 		result = append(result, row)
 	}
 
-	response := CR{
-		"response": CR{
+	response := CT{
+		"response": CT{
 			"records": result,
 		},
 	}
@@ -327,7 +336,7 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 	tableName := explorer.pathParts[1]
 
 	if explorer.checkTable(tableName) == "" {
-		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
+		_ = writeJSON(w, CT{"error": "unknown table"}, http.StatusNotFound)
 		return
 	}
 	id, err := explorer.parseId()
@@ -340,17 +349,17 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 
 	columns := explorer.getColumns(tableName)
 
-	var result []CR
+	var result []CT
 
 	row, err := dbRowToMap(req, columns)
 	if err != nil {
-		_ = writeJSON(w, CR{"error": "record not found"}, http.StatusNotFound)
+		_ = writeJSON(w, CT{"error": "record not found"}, http.StatusNotFound)
 		return
 	}
 	result = append(result, row)
 
-	response := CR{
-		"response": CR{
+	response := CT{
+		"response": CT{
 			"records": result,
 		},
 	}
@@ -370,7 +379,7 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 	tableName := explorer.pathParts[1]
 
 	if explorer.checkTable(tableName) == "" {
-		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
+		_ = writeJSON(w, CT{"error": "unknown table"}, http.StatusNotFound)
 		return
 	}
 	id, err := explorer.parseId()
@@ -379,7 +388,7 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var updates CR
+	var updates CT
 	err = json.NewDecoder(r.Body).Decode(&updates)
 	if err != nil {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
@@ -392,11 +401,11 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if updates[pkColumn] != nil {
-		_ = writeJSON(w, CR{"error": fmt.Sprintf("field %s have invalid type", pkColumn)}, http.StatusBadRequest)
+		_ = writeJSON(w, CT{"error": fmt.Sprintf("field %s have invalid type", pkColumn)}, http.StatusBadRequest)
 		return
 	}
 	errMessege := explorer.checkBody(tableName, updates)
-	if err != nil {
+	if errMessege != nil {
 		_ = writeJSON(w, errMessege, http.StatusBadRequest)
 	}
 
@@ -428,8 +437,8 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	response := CR{
-		"response": CR{
+	response := CT{
+		"response": CT{
 			"updated": rowsAffected,
 		},
 	}
@@ -450,11 +459,11 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 	tableName := explorer.pathParts[1]
 
 	if explorer.checkTable(tableName) == "" {
-		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
+		_ = writeJSON(w, CT{"error": "unknown table"}, http.StatusNotFound)
 		return
 	}
 
-	var updates CR
+	var updates CT
 	err = json.NewDecoder(r.Body).Decode(&updates)
 	if err != nil {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
@@ -500,8 +509,8 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := CR{
-		"response": CR{
+	response := CT{
+		"response": CT{
 			pkColumn: lastId,
 		},
 	}
@@ -522,7 +531,7 @@ func (explorer *dbExplorer) handleDeleteById(w http.ResponseWriter, r *http.Requ
 	tableName := explorer.pathParts[1]
 
 	if explorer.checkTable(tableName) == "" {
-		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
+		_ = writeJSON(w, CT{"error": "unknown table"}, http.StatusNotFound)
 		return
 	}
 	id, err := explorer.parseId()
@@ -547,8 +556,8 @@ func (explorer *dbExplorer) handleDeleteById(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	response := CR{
-		"response": CR{
+	response := CT{
+		"response": CT{
 			"deleted": rowsAffected,
 		},
 	}
