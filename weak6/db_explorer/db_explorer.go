@@ -26,6 +26,8 @@ type dbExplorer struct {
 	cacheLoaded bool
 }
 
+type CR map[string]interface{}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -74,8 +76,8 @@ func writeErrJSON(w http.ResponseWriter, err error, status int) error {
 	return writeJSON(w, result, status)
 }
 
-func dbRowToMap(scanner rowScanner, columns []Column) (map[string]any, error) {
-	row := make(map[string]any)
+func dbRowToMap(scanner rowScanner, columns []Column) (CR, error) {
+	row := CR{}
 	values := make([]any, len(columns))
 	valuePtrs := make([]any, len(columns))
 	for i := range values {
@@ -176,15 +178,26 @@ func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Re
 	for _, t := range explorer.cache {
 		res = append(res, t.Name)
 	}
-	if err := writeJSON(w, res, http.StatusOK); err != nil {
+	response := CR{
+		"response": CR{
+			"tables": res,
+		},
+	}
+
+	if err := writeJSON(w, response, http.StatusOK); err != nil {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 	}
 }
 
 func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Request) {
+	err := explorer.getDbInfo()
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
 	tableName := explorer.pathParts[1]
 	if explorer.checkTable(tableName) == "" {
-		_ = writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
+		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
 		return
 	}
 
@@ -206,7 +219,7 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 	defer req.Close()
 	columns := explorer.getColumns(tableName)
 
-	var result []map[string]any
+	var result []CR
 	for req.Next() {
 		row, err := dbRowToMap(req, columns)
 		if err != nil {
@@ -216,7 +229,13 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 		result = append(result, row)
 	}
 
-	if err := writeJSON(w, result, http.StatusOK); err != nil {
+	response := CR{
+		"response": CR{
+			"records": result,
+		},
+	}
+
+	if err := writeJSON(w, response, http.StatusOK); err != nil {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 	}
 }
@@ -231,7 +250,7 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 	tableName := explorer.pathParts[1]
 
 	if explorer.checkTable(tableName) == "" {
-		_ = writeErrJSON(w, fmt.Errorf("Table '%s' not found", tableName), http.StatusNotFound)
+		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
 		return
 	}
 	id, err := explorer.parseId()
@@ -244,13 +263,22 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 
 	columns := explorer.getColumns(tableName)
 
-	result, err := dbRowToMap(req, columns)
+	var result []CR
+
+	row, err := dbRowToMap(req, columns)
 	if err != nil {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
+	result = append(result, row)
 
-	if err := writeJSON(w, result, http.StatusOK); err != nil {
+	response := CR{
+		"response": CR{
+			"records": result,
+		},
+	}
+
+	if err := writeJSON(w, response, http.StatusOK); err != nil {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 	}
 }
