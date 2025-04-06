@@ -41,21 +41,23 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pathParts := strings.Split(r.URL.Path, "/")
 		explorer.pathParts = pathParts
+		if r.Method == http.MethodPut && len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] == "" {
+			explorer.handlePut(w, r) // PUT /$table/
+			return
+		}
+
 		if r.Method == http.MethodPost && len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] != "" {
 			explorer.handlePostById(w, r) //POST /$table/$id
 			return
 		}
-
 		if r.URL.Path == "/" {
 			explorer.handleGetAllTables(w, r) // GET /
 			return
 		}
-
 		if len(pathParts) == 2 && pathParts[1] != "" {
 			explorer.handleGetTableData(w, r) //GET /$table?limit=5&offset=7
 			return
 		}
-
 		if len(pathParts) == 3 && pathParts[1] != "" && pathParts[2] != "" {
 			explorer.handleGetById(w, r) //GET /$table/$id
 			return
@@ -404,6 +406,70 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 
 	response := CR{
 		"updated": rowsAffected,
+	}
+
+	if err := writeJSON(w, response, http.StatusOK); err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+	}
+	return
+}
+
+func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
+	err := explorer.getDbInfo()
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	tableName := explorer.pathParts[1]
+
+	if explorer.checkTable(tableName) == "" {
+		_ = writeJSON(w, CR{"error": "unknown table"}, http.StatusNotFound)
+		return
+	}
+
+	var updates CR
+	err = json.NewDecoder(r.Body).Decode(&updates)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+	defer r.Body.Close()
+
+	errMessege := explorer.checkBody(tableName, updates)
+	if err != nil {
+		_ = writeJSON(w, errMessege, http.StatusBadRequest)
+	}
+
+	columns := make([]string, 0, len(updates))
+	placeholders := make([]string, 0, len(updates))
+	params := make([]interface{}, 0, len(updates))
+
+	for col, val := range updates {
+		columns = append(columns, col)
+		placeholders = append(placeholders, "?")
+		params = append(params, val)
+	}
+
+	sqlQuery := fmt.Sprintf(`
+        INSERT INTO %s (%s)
+        VALUES (%s);
+    `, tableName, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
+
+	result, err := explorer.db.Exec(sqlQuery, params...)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	lastId, err := result.LastInsertId()
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	response := CR{
+		"id": lastId,
 	}
 
 	if err := writeJSON(w, response, http.StatusOK); err != nil {
