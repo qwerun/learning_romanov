@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,14 +77,6 @@ func writeJSON(w http.ResponseWriter, v any, status int) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(v)
-}
-
-func writeErrJSON(w http.ResponseWriter, err error, status int) error {
-	result := map[string]any{
-		"ok":    false,
-		"error": err.Error(),
-	}
-	return writeJSON(w, result, status)
 }
 
 func dbRowToMap(scanner rowScanner, columns []Column) (CT, error) {
@@ -290,7 +281,7 @@ func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Re
 
 	err := explorer.getDbInfo()
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "getDbInfo error"}, http.StatusInternalServerError)
 		return
 	}
 	var res []string
@@ -304,14 +295,14 @@ func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := writeJSON(w, response, http.StatusOK); err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "GetAllTables error"}, http.StatusInternalServerError)
 	}
 }
 
 func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Request) {
 	err := explorer.getDbInfo()
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "getDbInfo error"}, http.StatusInternalServerError)
 		return
 	}
 	tableName := explorer.pathParts[1]
@@ -332,7 +323,7 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 
 	req, err := explorer.db.Query(fmt.Sprintf("SELECT * FROM %s LIMIT ? OFFSET ?;", tableName), limit, offset)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "Query table data error"}, http.StatusInternalServerError)
 		return
 	}
 	defer req.Close()
@@ -342,7 +333,7 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 	for req.Next() {
 		row, err := dbRowToMap(req, columns)
 		if err != nil {
-			_ = writeErrJSON(w, err, http.StatusInternalServerError)
+			_ = writeJSON(w, CT{"error": "rowToMap error"}, http.StatusInternalServerError)
 			return
 		}
 		result = append(result, row)
@@ -355,14 +346,14 @@ func (explorer *dbExplorer) handleGetTableData(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := writeJSON(w, response, http.StatusOK); err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "getTableData error"}, http.StatusInternalServerError)
 	}
 }
 
 func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request) {
 	err := explorer.getDbInfo()
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "getDbInfo error"}, http.StatusInternalServerError)
 		return
 	}
 
@@ -374,12 +365,12 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 	}
 	id, err := explorer.parseId()
 	if err != nil {
-		_ = writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
+		_ = writeJSON(w, CT{"error": "parseId error"}, http.StatusBadRequest)
 		return
 	}
 	pkColumn, err := explorer.getPKColumn(tableName)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "PKColumn error"}, http.StatusInternalServerError)
 		return
 	}
 
@@ -405,14 +396,14 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := writeJSON(w, response, http.StatusOK); err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "GetById error"}, http.StatusInternalServerError)
 	}
 }
 
 func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Request) {
 	err := explorer.getDbInfo()
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "getDbInfo error"}, http.StatusInternalServerError)
 		return
 	}
 
@@ -424,20 +415,20 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 	}
 	id, err := explorer.parseId()
 	if err != nil {
-		_ = writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
+		_ = writeJSON(w, CT{"error": "parseId table"}, http.StatusBadRequest)
 		return
 	}
 
 	var updates CT
 	err = json.NewDecoder(r.Body).Decode(&updates)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 	r.Body.Close()
 	pkColumn, err := explorer.getPKColumn(tableName)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 
@@ -463,7 +454,7 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 
 	pkColumn, err = explorer.getPKColumn(tableName)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 
@@ -475,13 +466,13 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 
 	result, err := explorer.db.Exec(sqlQuery, params...)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 
@@ -492,7 +483,7 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := writeJSON(w, response, http.StatusOK); err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 	}
 	return
 }
@@ -500,7 +491,7 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 	err := explorer.getDbInfo()
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "getDbInfo error"}, http.StatusInternalServerError)
 		return
 	}
 
@@ -514,7 +505,7 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 	var updates CT
 	err = json.NewDecoder(r.Body).Decode(&updates)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 	r.Body.Close()
@@ -525,7 +516,7 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 
 	pkColumn, err := explorer.getPKColumn(tableName)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 
@@ -550,15 +541,13 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 	result, err := explorer.db.Exec(sqlQuery, params...)
 	if err != nil {
 
-		log.Printf("\n\n%v\n%v\n\n", err, updates)
-
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 
 	lastId, err := result.LastInsertId()
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 
@@ -569,7 +558,7 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := writeJSON(w, response, http.StatusOK); err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 	}
 	return
 }
@@ -577,7 +566,7 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 func (explorer *dbExplorer) handleDeleteById(w http.ResponseWriter, r *http.Request) {
 	err := explorer.getDbInfo()
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": "getDbInfo error"}, http.StatusInternalServerError)
 		return
 	}
 
@@ -589,7 +578,7 @@ func (explorer *dbExplorer) handleDeleteById(w http.ResponseWriter, r *http.Requ
 	}
 	id, err := explorer.parseId()
 	if err != nil {
-		_ = writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusBadRequest)
 		return
 	}
 
@@ -599,13 +588,13 @@ func (explorer *dbExplorer) handleDeleteById(w http.ResponseWriter, r *http.Requ
 
 	result, err := explorer.db.Exec(sqlQuery, id)
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 		return
 	}
 
@@ -616,7 +605,7 @@ func (explorer *dbExplorer) handleDeleteById(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := writeJSON(w, response, http.StatusOK); err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		_ = writeJSON(w, CT{"error": ""}, http.StatusInternalServerError)
 	}
 	return
 }
