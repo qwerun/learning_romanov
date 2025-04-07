@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,7 +38,7 @@ type rowScanner interface {
 func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 	//db.SetMaxOpenConns(1)
 	//db.SetMaxIdleConns(1)
-	//db.SetConnMaxLifetime(time.Second * 5)
+	fmt.Printf("1Open: %v \n", db.Stats().OpenConnections)
 	explorer := &dbExplorer{
 		db: db,
 	}
@@ -128,7 +129,6 @@ func (explorer *dbExplorer) getDbInfo() error {
 	if explorer.cacheLoaded {
 		return explorer.cacheErr
 	}
-
 	tableRows, err := explorer.db.Query("SHOW TABLES;")
 	if err != nil {
 		explorer.cacheErr = err
@@ -136,15 +136,22 @@ func (explorer *dbExplorer) getDbInfo() error {
 	}
 	defer tableRows.Close()
 
-	var tables []Table
+	var tableNames []string
 	for tableRows.Next() {
-		var table Table
-		if err := tableRows.Scan(&table.Name); err != nil {
+		var tableName string
+		if err := tableRows.Scan(&tableName); err != nil {
 			explorer.cacheErr = err
 			return err
 		}
+		tableNames = append(tableNames, tableName)
+	}
 
-		columnRows, err := explorer.db.Query(fmt.Sprintf("SHOW FULL COLUMNS FROM `%s`;", table.Name))
+	var tables []Table
+	for _, tName := range tableNames {
+		var table Table
+		table.Name = tName
+
+		columnRows, err := explorer.db.Query(fmt.Sprintf("SHOW FULL COLUMNS FROM `%s`;", tName))
 		if err != nil {
 			explorer.cacheErr = err
 			return err
@@ -184,6 +191,7 @@ func (explorer *dbExplorer) checkTable(table string) string {
 }
 
 func (explorer *dbExplorer) checkBody(tableName string, updates CT) CT {
+
 	var tableInfo Table
 	for _, v := range explorer.tableInfo {
 		if v.Name == tableName {
@@ -205,11 +213,13 @@ func (explorer *dbExplorer) checkBody(tableName string, updates CT) CT {
 
 		if colDef.Null == "NO" && value == nil {
 			return CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+		} else if value == nil {
+			return nil
 		}
 
 		if strings.HasPrefix(colDef.Types, "varchar") || colDef.Types == "text" {
 			if _, ok := value.(string); !ok {
-				return CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+				return CT{"error": fmt.Sprintf("field %s have invalid type", columnName)} //here error
 			}
 		}
 
@@ -255,6 +265,7 @@ func (explorer *dbExplorer) getPKColumn(tableName string) (string, error) {
 }
 
 func (explorer *dbExplorer) handleGetAllTables(w http.ResponseWriter, r *http.Request) {
+
 	err := explorer.getDbInfo()
 	if err != nil {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
@@ -344,23 +355,30 @@ func (explorer *dbExplorer) handleGetById(w http.ResponseWriter, r *http.Request
 		_ = writeErrJSON(w, fmt.Errorf("Invalid ID format: %v", err), http.StatusBadRequest)
 		return
 	}
+	pkColumn, err := explorer.getPKColumn(tableName)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
 
-	req := explorer.db.QueryRow(fmt.Sprintf("SELECT * FROM %s WHERE id = ?;", tableName), id)
+	query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?;", tableName, pkColumn)
+
+	req := explorer.db.QueryRow(query, id)
 
 	columns := explorer.getColumns(tableName)
 
-	var result []CT
+	var result CT
 
 	row, err := dbRowToMap(req, columns)
 	if err != nil {
 		_ = writeJSON(w, CT{"error": "record not found"}, http.StatusNotFound)
 		return
 	}
-	result = append(result, row)
+	result = row
 
 	response := CT{
 		"response": CT{
-			"records": result,
+			"record": result,
 		},
 	}
 
@@ -394,12 +412,13 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
-	defer r.Body.Close()
+	r.Body.Close()
 	pkColumn, err := explorer.getPKColumn(tableName)
 	if err != nil {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
+
 	if updates[pkColumn] != nil {
 		_ = writeJSON(w, CT{"error": fmt.Sprintf("field %s have invalid type", pkColumn)}, http.StatusBadRequest)
 		return
@@ -407,6 +426,7 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 	errMessege := explorer.checkBody(tableName, updates)
 	if errMessege != nil {
 		_ = writeJSON(w, errMessege, http.StatusBadRequest)
+		return
 	}
 
 	setParts := make([]string, 0, len(updates))
@@ -419,11 +439,17 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 
 	params = append(params, id)
 
+	pkColumn, err = explorer.getPKColumn(tableName)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
 	sqlQuery := fmt.Sprintf(`
         UPDATE %s 
         SET %s 
-        WHERE id = ?;
-    `, tableName, strings.Join(setParts, ", "))
+        WHERE %s = ?;
+    `, tableName, strings.Join(setParts, ", "), pkColumn)
 
 	result, err := explorer.db.Exec(sqlQuery, params...)
 	if err != nil {
@@ -476,11 +502,20 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 		_ = writeJSON(w, errMessege, http.StatusBadRequest)
 	}
 
+	pkColumn, err := explorer.getPKColumn(tableName)
+	if err != nil {
+		_ = writeErrJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
 	columns := make([]string, 0, len(updates))
 	placeholders := make([]string, 0, len(updates))
 	params := make([]interface{}, 0, len(updates))
 
 	for col, val := range updates {
+		if pkColumn == col { ////////////////////////////////////////////////////////////////////////////////////////////////////
+			continue
+		}
 		columns = append(columns, col)
 		placeholders = append(placeholders, "?")
 		params = append(params, val)
@@ -493,17 +528,14 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 
 	result, err := explorer.db.Exec(sqlQuery, params...)
 	if err != nil {
+
+		log.Printf("\n\n%v\n%v\n\n", err, updates)
+
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 
 	lastId, err := result.LastInsertId()
-	if err != nil {
-		_ = writeErrJSON(w, err, http.StatusInternalServerError)
-		return
-	}
-
-	pkColumn, err := explorer.getPKColumn(tableName)
 	if err != nil {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
