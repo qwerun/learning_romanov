@@ -16,9 +16,10 @@ type Table struct {
 }
 
 type Column struct {
-	Name  string `json:"name"`
-	Types string `json:"types"`
-	Null  string `json:"null"`
+	Name    string `json:"name"`
+	Types   string `json:"types"`
+	Null    string `json:"null"`
+	Default string `json:"default"`
 }
 
 type dbExplorer struct {
@@ -36,9 +37,6 @@ type rowScanner interface {
 }
 
 func NewDbExplorer(db *sql.DB) (http.Handler, error) {
-	//db.SetMaxOpenConns(1)
-	//db.SetMaxIdleConns(1)
-	fmt.Printf("1Open: %v \n", db.Stats().OpenConnections)
 	explorer := &dbExplorer{
 		db: db,
 	}
@@ -160,11 +158,19 @@ func (explorer *dbExplorer) getDbInfo() error {
 		for columnRows.Next() {
 			var col Column
 			var empty sql.RawBytes
-			if err := columnRows.Scan(&col.Name, &col.Types, &empty, &col.Null, &empty, &empty, &empty, &empty, &empty); err != nil {
+			var defaultVal sql.NullString
+			if err := columnRows.Scan(&col.Name, &col.Types, &empty, &col.Null, &empty, &defaultVal, &empty, &empty, &empty); err != nil {
 				columnRows.Close()
 				explorer.cacheErr = err
 				return err
 			}
+
+			if defaultVal.Valid {
+				col.Default = defaultVal.String
+			} else {
+				col.Default = ""
+			}
+
 			table.Columns = append(table.Columns, col)
 		}
 
@@ -190,7 +196,7 @@ func (explorer *dbExplorer) checkTable(table string) string {
 	return ""
 }
 
-func (explorer *dbExplorer) checkBody(tableName string, updates CT) CT {
+func (explorer *dbExplorer) checkBody(tableName string, updates CT) (CT, CT) {
 
 	var tableInfo Table
 	for _, v := range explorer.tableInfo {
@@ -198,7 +204,7 @@ func (explorer *dbExplorer) checkBody(tableName string, updates CT) CT {
 			tableInfo = v
 		}
 	}
-
+	res := make(CT)
 	for columnName, value := range updates {
 		var colDef *Column
 		for _, col := range tableInfo.Columns {
@@ -208,28 +214,44 @@ func (explorer *dbExplorer) checkBody(tableName string, updates CT) CT {
 			}
 		}
 		if colDef == nil {
-			return CT{"error": fmt.Sprintf("unknown column %s", columnName)}
+			continue
 		}
 
 		if colDef.Null == "NO" && value == nil {
-			return CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+			return nil, CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
 		} else if value == nil {
-			return nil
+			continue
 		}
 
 		if strings.HasPrefix(colDef.Types, "varchar") || colDef.Types == "text" {
 			if _, ok := value.(string); !ok {
-				return CT{"error": fmt.Sprintf("field %s have invalid type", columnName)} //here error
+				return nil, CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
 			}
 		}
 
 		if strings.HasPrefix(colDef.Types, "int") {
 			if _, ok := value.(float64); !ok {
-				return CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+				return nil, CT{"error": fmt.Sprintf("field %s have invalid type", columnName)}
+			}
+		}
+
+		res[columnName] = value
+	}
+
+	for _, col := range tableInfo.Columns {
+		if _, exists := res[col.Name]; !exists {
+			if col.Null == "NO" && col.Default == "" {
+				if strings.HasPrefix(col.Types, "varchar") || col.Types == "text" {
+					res[col.Name] = ""
+				} else if strings.HasPrefix(col.Types, "int") {
+					res[col.Name] = 0
+				} else {
+					res[col.Name] = nil
+				}
 			}
 		}
 	}
-	return nil
+	return res, nil
 }
 
 func (explorer *dbExplorer) parseId() (int, error) {
@@ -423,7 +445,7 @@ func (explorer *dbExplorer) handlePostById(w http.ResponseWriter, r *http.Reques
 		_ = writeJSON(w, CT{"error": fmt.Sprintf("field %s have invalid type", pkColumn)}, http.StatusBadRequest)
 		return
 	}
-	errMessege := explorer.checkBody(tableName, updates)
+	_, errMessege := explorer.checkBody(tableName, updates)
 	if errMessege != nil {
 		_ = writeJSON(w, errMessege, http.StatusBadRequest)
 		return
@@ -495,10 +517,9 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 		_ = writeErrJSON(w, err, http.StatusInternalServerError)
 		return
 	}
-	defer r.Body.Close()
-
-	errMessege := explorer.checkBody(tableName, updates)
-	if err != nil {
+	r.Body.Close()
+	updates, errMessege := explorer.checkBody(tableName, updates)
+	if errMessege != nil {
 		_ = writeJSON(w, errMessege, http.StatusBadRequest)
 	}
 
@@ -513,7 +534,7 @@ func (explorer *dbExplorer) handlePut(w http.ResponseWriter, r *http.Request) {
 	params := make([]interface{}, 0, len(updates))
 
 	for col, val := range updates {
-		if pkColumn == col { ////////////////////////////////////////////////////////////////////////////////////////////////////
+		if pkColumn == col {
 			continue
 		}
 		columns = append(columns, col)
